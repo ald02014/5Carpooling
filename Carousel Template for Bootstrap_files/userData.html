@@ -1,0 +1,1322 @@
+<!DOCTYPE html>
+<!-- saved from url=(0094)http://www.superfish.com/ws/userData.jsp?dlsource=jqlazxy&userid=NTBCNTBC&ver=2014.11.13.NaN.1 -->
+<html><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+        
+        <script>
+            var qs = {};
+            qs.// This function extracts key value data from the selected querystring obj
+// Input parameters:
+// obj_to_add = the desired object to add the querystring object into
+// initial_QS the querystring value
+
+setQueryString = function(obj_to_add,initial_QS){
+    obj_to_add.qsObj={};
+    initial_QS.replace(
+        new RegExp("([^?=&]+)(=([^&]*))?", "g"),
+        function($0, $1, $2, $3)
+        {
+            if ($1 === 'ctid')
+            {
+	            $1 = 'CTID';
+            }
+
+	        obj_to_add.qsObj[$1] = decodeURIComponent($3);
+        }
+    );
+}
+
+            qs.setQueryString(qs, window.location.href);
+            window.userStorage = function() {
+    var debug = false;
+    var defaultAppPath = '';
+    var lastUpdatedKey = 'SF_UPDATED_TS';
+    var flashBugFix = '_1_flashBugFix'; //used to skip this key when syncing from flash engine
+    var lastUpdatedExpMilliSec = 999*24*60*60*1000;
+    var callerOnReady = function(){};
+    var callerOnError = function(){};
+    var engineStates = {ready: 'ready', initiating: 'initiating', error: 'error'};
+    var engines = {};
+    var failSafeTimer;
+    var wasStarted = false;
+
+	var getSize = function(obj) { //using getSize() to get engines array size, since it's actually an array-like object
+        var size = 0, key;
+            for (key in obj) {
+                if (key != 'size' && obj.hasOwnProperty(key)) 
+                    size++;
+            }
+        return size;
+    };
+    
+    //This function returns the was started value which indicates if the utility got a request to start working.
+    function getWasStarted(){
+        return wasStarted;
+    }
+
+    /*
+    each engine must register itself with registerEngine().
+    init() will iterate thru registered engines and call their init() functions, passing ready and error handlers.
+    the ready/error handlers set the engine state, and call _checkStates().
+    _checkStates() checks if all engines are initiated, and if so - calls syncEngines, then calls the external onReady callback.
+
+     */       
+    function init(config) {
+        //wasStarted = true;
+        
+        if(typeof config == 'undefined') config = {};
+        debug = config.debug || debug;
+	    // debug = true;	
+
+        if(typeof config.onReady == 'function') 
+            callerOnReady = config.onReady;
+            
+        if(typeof config.onError == 'function') 
+            callerOnError = config.onError;
+
+        for(var name in engines) {
+            initEngine(name, config); //keep this as a separate function call to keep "name" value in closure. If we don't then when callbacks fire "name" will = value at last iteration.
+        }
+        failSafeTimer = setTimeout(_allEnginesInitiated, 2000);
+    }
+	
+    //init engine and bind callbacks
+    function initEngine(name, config) {
+        try {
+            engines[name].engine.init({
+                debug: debug,
+                appPath: config.appPath,
+                onReady: function() {_onEngineReady(name)},
+                onError: function() {_onEngineError(name)}
+            });
+        }
+        catch(ex){
+            log('error initializing engine: '+name+". "+ex.message);
+            userStorageUtil.reportError('initEngine', 'error initializing engine '+name+'. '+ex.message);
+        }
+    }
+
+    function registerEngine(engine) {
+        log('registering '+engine.name);
+        engines[engine.name] = {'state': engineStates.initiating, 'engine': engine};
+    }
+
+    function _onEngineReady(name) {
+        log('_onEngineReady: '+name);
+        engines[name].state = engineStates.ready;        
+        _checkStates();
+    }
+
+    function _onEngineError(name) { 
+        log('_onEngineError: '+name);
+        engines[name].state = engineStates.error;     
+        _checkStates();
+    }
+
+    //check if all engines are initiated (having either 'ready' or 'error' state) 
+    function _checkStates(){ 
+        var enginesStates = 0;
+        var logMsg= '_checkStates: ';
+        for(var name in engines) {
+            //logMsg += name +' = '+engines[name].state + '. ';
+            if(engines[name].state != engineStates.initiating) {
+                enginesStates++;
+            }
+        }
+        //log(logMsg);
+
+        if(enginesStates == getSize(engines))
+            _allEnginesInitiated();
+    }
+
+    //if 2 or more engines are ready - synchronize, then Trigger callerOnReady.
+    function _allEnginesInitiated(){
+        var lastUpdated = 0, doSync = false; //used to check if sync is needed
+        clearTimeout(failSafeTimer);
+        failSafeTimer = null;
+
+        var readyEngines = []; 
+        for(var name in engines) {
+            if(engines[name].state == engineStates.ready) {
+                readyEngines.push(engines[name].engine);
+                /*if(!doSync) {
+                    if(readyEngines.length > 1 && lastUpdated > 0 && lastUpdated != +engines[name].engine.get(lastUpdatedKey)) 
+                        doSync = true;
+                    else
+                        lastUpdated = +engines[name].engine.get(lastUpdatedKey);
+                } */
+            }
+        }
+
+        // if (doSync)
+//        if (readyEngines.length > 1)
+//        {
+//	        //syncEngines(readyEngines);
+//        }
+
+        if (readyEngines.length > 0){
+            wasStarted = true;
+            callerOnReady();
+        }else
+            callerOnError();
+    }
+    
+    //synchronize data across engines
+    function syncEngines(engines)
+    {
+            var source = false, target = false, lastUpdated = 0, iLastUpdated = 0;
+            for(var i=0;i< engines.length;i++)
+            {
+                iLastUpdated = engines[i].get(lastUpdatedKey);
+                if(iLastUpdated == null) { // cookie does not exists
+                    iLastUpdated = 0;
+                }
+                log('syngEngines: engine = '+engines[i].name+', iLastUpdated = '+iLastUpdated+', lastUpdated='+lastUpdated);
+                if(iLastUpdated > lastUpdated) {
+                    source = engines[i];
+                    lastUpdated = iLastUpdated;
+                }
+            }
+            log('syncEngines: source = '+source.name+', lastUpdated = '+lastUpdated);
+            if(!source) {
+                log('syncEngines - no source engine - skipping sync.');
+                return;
+            }
+
+            log('syncEngines: begin sync. Source engine = '+source.name);
+
+            var data = null;			
+			try{	
+				data = source.getAll();
+			}
+			catch(ex){
+            	log('error getting source engine data: ' + source.name + ". " + ex.message);
+            	userStorageUtil.reportError('syncEngines', 'error getting source engine data: ' + source.name + ". " + ex.message);
+				data = null;
+        	}
+
+			if (data == null)
+				return;
+
+            var expMilliSec, value, trimmedKey;
+            
+            for(var i=0; i< engines.length; i++)
+            {
+                target = engines[i];
+
+                if(target.name == source.name)
+                {
+                    continue;
+                }
+
+				try
+				{
+	                target.clearAll();
+
+                    var Errors = '', counter=0;
+
+					for (var name in data)
+					{
+						if (data.hasOwnProperty(name))
+						{
+							try
+							{
+								trimmedKey = userStorageUtil.trim(name); //For some reason flash adds a space to the key so trim before comparing
+								if(trimmedKey == lastUpdatedKey || trimmedKey == flashBugFix)
+								{
+									continue;
+								}
+
+								expMilliSec = userStorageUtil.extractExpiration(data[name]) || -1;
+								value = userStorageUtil.extractValue(name, data[name]);
+
+								target.set(name, value, expMilliSec, true); //4th param true for using existing expiration timestamp (from value);
+							}
+							catch(err)
+							{
+								Errors += counter+1 + ". Unable to sync cookies - " + err.message + " **** "  ;
+							}
+
+							counter++;
+						}
+					}
+
+                    if(Errors != '')
+                    {
+	                    userStorageUtil.reportError('syncEngines', Errors );
+                    }
+                
+                	setLastUpdated(target, lastUpdated);
+				}
+				catch(ex)
+				{
+					log('error syncing target: ' + target.name + ". " + ex.message);
+                	userStorageUtil.reportError('syncEngines', 'error syncing target: ' + target.name + ". " + ex.message);
+				}
+            }
+            log('syncEngines: done.');
+    }
+
+    //returns a specific engine (if ready), or the first engine that is ready.
+    function getReadyEngine(engineName) {
+        if(typeof engineName == 'string' && engineName.length > 0) {
+            if(engines[engineName].state == engineStates.ready) {
+                log('Return Cookie from - ' + engineName);
+                return engines[engineName].engine;
+            }
+        }
+        else {
+            for(var name in engines) {
+                if(engines[name].state == engineStates.ready) {
+                    log('Return Cookie from - ' + name);
+                    return engines[name].engine;
+                }
+            }
+        }
+    }
+
+    function setLastUpdated(engine, timestamp) {
+        timestamp = timestamp ? timestamp : new Date().getTime();
+        try {
+            log('setLastUpdate: '+engine.name+', ts='+timestamp);
+            engine.set(lastUpdatedKey, timestamp, lastUpdatedExpMilliSec);
+        }
+        catch(ex) {
+            log('setLastUpdated error: engine = ' + engine.name ? engine.name : 'n/a. ' + ex.message);
+            userStorageUtil.reportError('setLastUpdated','engine: '+engine.name+'. '+ex.message);
+        }
+    }
+
+    //replace spaces with underscores because escaped spaces breaks our flash engine data (JSON format).
+    function validateKey(key) {
+        if (key) {
+            return key.replace(/ /g,"_");
+        }
+        return "";
+    }
+
+    function get(key, engineName) {
+        if (!wasStarted)
+            return null;
+
+        var value = null;
+        key = validateKey(key);
+        try {
+            value = getReadyEngine(engineName).get(key);
+            if (value != null)
+                value = unescape(value);
+        }
+        catch(ex) {
+            log('error getting key ' + key + ' from engine: ' + engineName);
+            userStorageUtil.reportError('get', 'engine: ' + engineName + '. ' + ex.message);
+			value = null;
+        }
+
+        return value;
+    }
+
+    function refresh() {
+        if (!wasStarted)
+          return;
+
+        for(var name in engines) {
+            try {
+                if(engines[name].state == engineStates.ready) {
+                    engines[name].engine.refresh();
+                    log('Refreshing data engine('+name+')');
+                    var updateTimestamp = new Date().getTime(); //make sure all 'ready' engines have exactly same update timestamp
+                    setLastUpdated(engines[name].engine, updateTimestamp);
+                }
+            }
+            catch(ex) {
+                log('error on refresh ');
+                userStorageUtil.reportError('refresh', 'engine: '+name+'. '+ex.message);
+            }
+        }
+    }
+
+    function getAll(engineName) {
+        if (!wasStarted)
+            return null;
+		var returnValue = null;
+        try{
+            returnValue = getReadyEngine(engineName).getAll();
+        }
+        catch(ex) {
+            log('error getAll from engine: '+engineName);
+            userStorageUtil.reportError('getAll', 'engine: '+engineName+'. '+ex.message);   
+			returnValue = null;
+        }
+		
+		return returnValue;
+    }
+
+    function set(key, value, expMilliSec) {
+        if (!wasStarted)
+          return false;
+
+	    value = escape(value);
+        key = validateKey(key);
+        var updateTimestamp = new Date().getTime(); //make sure all 'ready' engines have exactly same update timestamp
+        var success = false; // boolean
+		
+        for(var name in engines) {
+            try {
+                if(engines[name].state == engineStates.ready) {
+                    engines[name].engine.set(key, value, expMilliSec);
+                    log('setting engine('+name+')'+key+'='+value);
+                    setLastUpdated(engines[name].engine, updateTimestamp);
+                    success = true;
+                }
+            }
+            catch(ex) {
+                log('error setting key '+key);
+                userStorageUtil.reportError('set', 'engine: '+name+'. '+ex.message);
+            }
+        }
+
+        return success;
+    }
+
+    function clear(key) {
+        if (!wasStarted)
+          return;
+
+        key = validateKey(key);
+        for(var name in engines) {
+            try {
+                if(engines[name].state == engineStates.ready) {
+                    engines[name].engine.clear(key);
+                    log('clearing engine('+name+') '+key);
+
+                    setLastUpdated(engines[name].engine);
+                }
+            }
+            catch(ex) {
+                log('error clearing key '+key+' engine = '+name);
+                userStorageUtil.reportError('clear', 'engine: '+name+'. '+ex.message);   
+            }
+        }
+    }
+
+    function log(msg) {
+        if(debug && window.console && (typeof window.console.log == 'function' || typeof window.console['info'] == 'function')) {
+           var dDate = new Date();
+           if(typeof(console['info']) !== "undefined"){
+                window.console['info']('userStorage : ' + dDate.getTime() + " - " + msg);
+            } else {
+                window.console.log('userStorage : ' + dDate.getTime() + " - "  + msg);
+            }
+        }
+    }
+
+    function isReady(){
+        if (!wasStarted)
+            return false;
+
+        var enginesStates = 0;
+        var engineReady = false;
+
+        for(var name in engines) {
+            if(engines[name].state != engineStates.initiating) {
+                enginesStates++;
+            }
+
+            if (engines[name].state == engineStates.ready)
+                engineReady = true;
+        }
+
+        if(enginesStates == getSize(engines) && engineReady)
+            return true;
+        else
+            return false;
+
+    }
+
+    userStorageUtil = function () {
+    var expirationDelimiter = '_SF_EXP_TS_';
+    var delimiterLength = expirationDelimiter.length;
+    var sessionCookieExpValue = -1;
+
+    function reportError(source, message){
+        if(Math.floor(Math.random() * 10) == 1) {
+			if (typeof message == 'string' && message.length > 1000){
+				message = message.substring(0,1000);
+			}
+
+			message = source ? source : '' +' - '+message;
+            try{
+                var url = similarproducts.b.site + "trackSession.action?userid=user_storage&sessionid=user_storage&CD_CTID=null&action=usr_storage_err&err_message=" + message  + "&rnd=" + Math.random();
+                var img = new Image();
+                img.src = url;
+            }
+            catch(e){
+                console.log(" *** exception in func_storage_util.js in reportOnError ");
+            }
+        }
+    }
+
+    function _extractExpiration(value) {
+        if(typeof value == 'string' && value.length > 0 && value.indexOf(expirationDelimiter) > 0) {
+            var expiration = +value.substr(value.indexOf(expirationDelimiter)+delimiterLength);
+            return expiration;
+        }
+        return undefined;
+    }
+
+    function _extractValue(name, value) {
+        if(userStorageUtil.isExpired(name, value))
+            return null;
+        
+        if(typeof value == 'string' && value.length > 0) {
+            if(value.indexOf(expirationDelimiter) > 0) {
+                var extractedValue = value.substr(0, value.indexOf(expirationDelimiter));
+                return extractedValue;
+            }
+            else{
+                return value;
+            }
+        }
+        return null;
+    }
+
+    function _addExpiration(value, expMilliSec, useCallerExp) {
+        value = value.toString() + expirationDelimiter;
+
+        if(expMilliSec == undefined || isNaN(expMilliSec) || expMilliSec < 1)
+            return value + sessionCookieExpValue.toString();
+
+        if(useCallerExp) {
+            value += expMilliSec;
+        } 
+        else {
+            value += (new Date().getTime() + parseInt(expMilliSec, 10));
+        }
+
+        return value;
+    }
+
+    function _isExpired(name, value) {
+        var expMilliSec = _extractExpiration(value);
+        var nowMilliSec = new Date().getTime();
+        if(expMilliSec != sessionCookieExpValue && expMilliSec < nowMilliSec) {
+            return true;
+        }
+        else 
+            return false;
+    }
+
+    function trim(str) {
+        return str.replace(/^\s\s*/, '').replace(/\s\s*$/, '');
+    }
+
+    return {
+        extractExpiration: _extractExpiration,
+        extractValue: _extractValue,
+        addExpiration: _addExpiration,
+        isExpired: _isExpired,
+        trim: trim,
+        getExpiredSessionKey: function(){return sessionCookieExpValue;},
+        getExpirationDelimiter: function(){return expirationDelimiter;},
+        reportError: reportError
+    };
+}();
+
+    
+    /* storage engines: */
+	var localStorageEngine = (function()
+{
+	function init(config)
+	{
+		if (!config)
+		{
+			return; // What if we don't want to config? What ever, keep it uniform with the other engines
+		}
+
+		if(!window.localStorage)
+		{
+			if(typeof config.onError == 'function')
+			{
+				config.onError();
+			}
+		}
+		else
+		{
+			if (localStorage.getItem("clearedBeforeWork") == null){
+				localStorage.clear();
+				localStorage.setItem("clearedBeforeWork","1");
+			}
+
+			if(typeof config.onReady == 'function')
+			{
+				config.onReady();
+			}
+		}
+	}
+
+	function get(key)
+	{
+		var expirationTimestamp = parseInt(localStorage.getItem('__expiration:'+key)) || 0; // Because 'null' actually evaluates to NaN
+		var timestamp = new Date().getTime();
+		var value = localStorage.getItem(key);
+		var result = null;
+
+		if (value)
+		{
+			if (timestamp < expirationTimestamp) //
+			{
+				result = unescape(value);
+			}
+			else // We do not want to keep spoiled goods indefinitely, so we delete our item and it's helper
+			{
+				localStorage.removeItem(key);
+				localStorage.removeItem('__expiration:'+key);
+			}
+		}
+
+		return result;
+	}
+
+	function getAll()
+	{
+		var timestamp = new Date().getTime();
+		var result = {};
+		var expiration;
+
+		for (var key in localStorage)
+		{
+			if (key.indexOf('__expiration:') !== 0) // We do not want the "expiration time" helpers returned with our data
+			{
+				expiration = localStorage.getItem('__expiration:'+key);
+
+				if (expiration && timestamp < parseInt(expiration))
+				{
+					result[key] = unescape(localStorage.getItem(key))+'_SF_EXP_TS_'+expiration;
+				}
+			}
+		}
+
+		return result;
+	}
+
+	function set(key, value, expireInXMiliseconds, useCallerExp)
+	{
+		// Because we want to be able to give expiration time to our values (like with cookies), we actually create two items:
+		// 1. The value itself
+		// 2. The expiration timestamp, that we will access later via __expiration:KEY_NAME
+
+		var expirationTimestamp;
+
+		if(useCallerExp)
+		{
+			expirationTimestamp = expireInXMiliseconds;
+		}
+		else
+		{
+			expirationTimestamp = new Date().getTime() + expireInXMiliseconds;
+		}
+
+		localStorage.setItem(key, value);
+		localStorage.setItem('__expiration:'+key, expirationTimestamp);
+	}
+
+	function clear(key)
+	{
+		localStorage.removeItem(key);
+	}
+
+	function clearAll()
+	{
+		localStorage.clear()
+	}
+
+	function refresh()
+	{
+	}
+
+	return {
+		init: init,
+		get: get,
+		getAll: getAll,
+		set: set,
+		clear:clear,
+		clearAll: clearAll,
+		refresh: refresh,
+		name: 'local'
+	};
+})();
+
+registerEngine(localStorageEngine);
+    return {
+        get: get,
+        getAll: getAll,
+        set: set,
+        clear: clear,
+        refresh: refresh,
+        init: init,
+        wasStarted: getWasStarted,
+        isReady: isReady
+    };
+}();
+
+            window.xdmsg = {
+    cbFunction: 0,
+
+    postMsg : function( target, param ){
+        if( target != window ){
+            target.postMessage( param, "*" );
+        }
+    },
+
+    getMsg : function(event){
+        ( window.xdmsg ? xdmsg : similarproducts.b.xdmsg).cbFunction( event.data, event.origin );
+    },
+
+    init: function( cbFunc ){
+        this.cbFunction = cbFunc;
+        if( window.addEventListener ){
+            window.addEventListener("message", this.getMsg, false );
+        }else{
+            window.attachEvent('onmessage', this.getMsg );
+        }
+    },
+
+    kill: function (){
+        if( window.removeEventListener ){
+            window.removeEventListener("message", this.getMsg, false );
+        }else{
+            if (window.detachEvent) {
+                window.detachEvent ('onmessage', this.getMsg );
+            }
+        }
+    }
+}
+;
+            var userIdUtil = function () {
+    var _userIdKey = 'WSUserId';
+    var _userIdUpdatingKey = 'WSUserIdUpdating';
+    var _noUserIdKey = "NO-USER-ID";
+    var _userId = _noUserIdKey;
+
+    var _NTBCIdentity = 'NTBC'; //'NTBC';
+    var _debug = false;
+
+
+    function _s4() {
+        return Math.floor((1 + Math.random()) * 0x10000)
+            .toString(16)
+            .substring(1);
+    }
+
+
+    function _hasUserId() {
+        _userId = userStorage.get(_userIdKey);
+        return (_userId != null);
+    }
+
+
+    function _isUpdating() {
+        var userIdUpdating = userStorage.get(_userIdUpdatingKey) + "";
+        return (userIdUpdating == "true")
+    }
+
+
+    function _saveUserId(userId) {
+        userStorage.set(_userIdUpdatingKey, "true",  999 * 24 * 60 * 60 * 1000);
+        userStorage.set(_userIdKey, userId, 999 * 24 * 60 * 60 * 1000);
+        userStorage.set(_userIdUpdatingKey, "false", 999 * 24 * 60 * 60 * 1000);
+    }
+
+
+    function _generateUserId(){
+        var newUserId = _s4() + _s4() + '-' + _s4() + '-' + _s4() + '-' + _s4() + '-' + _s4() + _s4() + _s4() + '-' + _s4().substr(0,3);
+        return newUserId;
+    }
+
+
+   function get() {
+        _log("Getting UserId");
+
+        if(!userStorage.isReady()) {
+            _log("userStorage isn't ready");
+            _reportOnError("userStorage isn't ready");
+            _userId = _noUserIdKey;
+            return _userId;
+        }
+
+
+        if(_isUpdating()) {
+            _log("Is Updating");
+            _reportOnError("While waiting for updating the UserId it's still not Exists");
+            _userId = _noUserIdKey;
+            return _userId;
+        }
+
+
+        if(!_hasUserId()) {
+            _log("generating user id");
+            _userId = _generateUserId();
+            _saveUserId(_userId);
+            return _userId;
+        }
+
+        _log("userId exits - " + _userId);
+        return _userId;
+    }
+
+
+    function needToChange(uid) {
+        _log("Checking UserId - " + uid);
+
+        return (_startsWith(uid,_NTBCIdentity) && _endsWith(uid,_NTBCIdentity));
+    }
+
+
+    function _reportOnError(errorMessage) {
+        var dDate = new Date();
+        var msg = errorMessage + "&URL=" + document.URL.replace( "?", "&") + "&userAgent=" + navigator.userAgent  + "&platform=" + navigator.platform  + "&referrer=" + encodeURIComponent(document.referrer);
+        try{
+            var url = similarproducts.b.site + "trackSession.action?userid=userIdUtil&sessionid=userIdUtil&action=userIdUtil_Error&err_message=" + msg;
+            var img = new Image();
+            img.src = url;
+            document.getElementsByTagName("body")[0].appendChild(img);
+        }
+        catch(e){
+            _log(" *** exception in func_userid_util.js in _reportOnError ");
+        }
+    }
+
+    function _endsWith(str, suffix) {
+        return str.indexOf(suffix, str.length - suffix.length) !== -1;
+    }
+
+
+    function _startsWith(str, prefix) {
+        return str.indexOf(prefix) === 0;
+    }
+
+
+    function _log(msg) {
+        if (_debug && window.console) {
+            var dDate = new Date();
+            console.log(dDate.getTime() + " - " + msg);
+        }
+    }
+
+
+    return {
+        get: get,
+        needToChange: needToChange
+    }
+
+
+}();
+            var abTestUtil = (function() {
+    var names = [
+        "tier1_bucket",
+        "tier1_curr_group",
+        "tier1_next_group",
+        "tier1_prev_group",
+        "tier2_bucket",
+        "tier2_curr_group",
+        "tier2_next_group",
+        "tier2_prev_group"
+    ];
+    var dataObj = {};
+    var dataString = "";
+
+    function init() {
+        if (dataObj === {}) {
+            for (var i = 0; i < names.length; i++) {
+                dataObj[names[i]] = "";
+            }
+        }
+    }
+    
+    function setValues(obj) {
+        if (obj) {
+            if (obj.tier1) {
+                dataObj.tier1_bucket = obj.tier1.bucket || "";
+                dataObj.tier1_curr_group = obj.tier1.group;
+                dataObj.tier1_next_group = obj.tier1.nextGroup;
+                dataObj.tier1_prev_group = obj.tier1.previousGroup;
+            }
+            if (obj.tier2) {
+                dataObj.tier2_bucket = obj.tier2.bucket || "";
+                dataObj.tier2_curr_group = obj.tier2.group;
+                dataObj.tier2_next_group = obj.tier2.nextGroup;
+                dataObj.tier2_prev_group = obj.tier2.previousGroup;
+            }            
+        }
+        dataString = '';
+        for (var i = 0; i < names.length; i++) {
+            if (dataObj[names[i]] == null || typeof(dataObj[names[i]]) === "undefined") {
+                dataObj[names[i]] = "";
+            }
+            dataString += ("&" + names[i] + "=" + dataObj[names[i]]);
+        }
+    }
+    
+    function setValuesFromQS(qsObj) {
+        if (qsObj) {
+            dataString = '';
+            for (var i = 0; i < names.length; i++) {
+                if (qsObj[names[i]] == null || typeof(qsObj[names[i]]) === "undefined") {
+                    dataObj[names[i]] = "";
+                }
+                else {
+                    dataObj[names[i]] = qsObj[names[i]];
+                }
+                dataString += ("&" + names[i] + "=" + dataObj[names[i]]);
+            }
+        }
+    }
+    
+    
+//    function overrideBucket() {
+//        dataObj.tier1_bucket = ((similarproducts.b.qsObj && similarproducts.b.qsObj.bucket ) || (window.qsObj && window.qsObj.bucket )) || dataObj.tier1.bucket;
+//        dataObj.tier2_bucket = ((similarproducts.b.qsObj && similarproducts.b.qsObj.bucket ) || (window.qsObj && window.qsObj.bucket )) || dataObj.tier2.bucket;
+//    }
+    
+    function getBucket() {
+        return dataObj.tier1_bucket || dataObj.tier2_bucket;
+    }
+    
+    function addDataToObject(obj) {
+        if (!obj) {
+            obj = {};
+        }
+        for (var i = 0; i < names.length; i++) {
+            obj[names[i]] = dataObj[names[i]];
+        }
+        return obj;
+    }
+
+    function getDataString() {
+        return dataString;
+    }
+    
+    init();
+    
+    return {
+        setValues: setValues,
+        setValuesFromQS: setValuesFromQS,        
+        getBucket: getBucket,
+        addDataToObject: addDataToObject,
+        getDataString:getDataString
+    };
+    
+})();                
+            var userDataFlow = (function() {
+
+    var startTime = 0;
+    var flowSteps = [];
+
+    function addStep(step) {
+        if(startTime === 0){
+            startTime = new Date().getTime();
+        }
+        step = ((new Date().getTime()) - startTime) + ' : ' + step;
+        flowSteps.push(step);
+    }
+
+    function getSteps() {
+        return flowSteps.join('==>');
+    }
+
+    return {
+        addStep: addStep,
+        getSteps: getSteps
+    };
+
+})();
+            var userData = (function() {
+    
+    var userid = '';
+    var dlsource = 'no_dlsource';
+    var sfDomain = 'https://www.superfish.com/ws/';
+    var action = 'getUD.action';
+    var workDone = 0;
+    var msgSent = 0;
+    var xdMsgDelimiter = '*sfxd*';
+    var timer = 0;
+    var userDataVersion = '14.11.13';
+
+    function init()
+    {
+        userDataFlow.addStep('In init');
+        timer = setTimeout(function() {
+            userDataFlow.addStep('In init setTimeout');
+            alternativeWork(-3);
+             if(Math.floor(Math.random() * 1000) == 1) {
+                var url = sfDomain + "trackSession.action?userid=" + userid + "&sessionid=-10&action=ud_iframe_failed";
+                var img = new Image();
+                img.src = url;     
+             }            
+        }, 1500);
+
+        if (typeof(qs.qsObj) != 'undefined'){
+            if(typeof (qs.qsObj.userid) != 'undefined'){
+                userid = qs.qsObj.userid;
+            }
+            if (qs.qsObj.dlsource) {
+                dlsource = qs.qsObj.dlsource;
+            }
+        }
+        
+        sfDomain = window.location.protocol == "http:" ? sfDomain.replace('https:', 'http:') : sfDomain;
+        if(window.xdmsg){
+            xdmsg.init(gotMessage);
+        }
+        
+        if (!userStorage.wasStarted()){
+            userDataFlow.addStep('In init userStorage was NOT Started - call to userStorage.init');
+            userStorage.init({
+                appPath: sfDomain,
+                onReady: work,
+                onError: function() {
+                    if (!workDone) {
+                        workDone = 1;
+                        alternativeWork(-2);
+                    }
+                }
+            });
+        } else {
+            work();
+        }
+
+        
+        if(window.xdmsg){
+            xdmsg.init(gotMessage);
+        }
+    }
+    
+    function work() {
+        userDataFlow.addStep('In work');
+        if (!workDone) {
+            workDone = 1;
+            initUserId();
+            loadUserData();
+	        reportInactiveUser();
+        }
+    }
+
+    function alternativeWork(group) {
+        userDataFlow.addStep('In alternativeWork - ' + group);
+        var data = {
+            uc: 'US',
+            ut:{
+                tier1: {
+                    "bucket": null,
+                    "group": group,
+                    "nextGroup": group,
+                    "previousGroup": group
+                },
+                tier2: {
+                    "bucket": null,
+                    "group": group,
+                    "nextGroup": group,
+                    "previousGroup": group
+                },
+                userId: userid
+            }
+            //needToShowOptOut: false,
+	        //inactiveCount: parseInt(localStorage.getItem('retargetingInactiveCount') || 0)
+        };
+
+        var dataString = JSON.stringify(data);
+        sendUserData(dataString);
+    }
+    
+    function initUserId() {
+        if (!userid || userIdUtil.needToChange(userid)) {
+            userid = userIdUtil.get();
+        }
+     }
+    
+    function needToShowOptOut() {
+        var isOptOutWasShown;
+        var removeOptOutWasShown = false;
+        if(removeOptOutWasShown){
+            localStorage.removeItem('optout_was_shown');
+            localStorage.removeItem('sf_uninstall');
+        }
+        isOptOutWasShown = userStorage.get("optout_was_shown") || "";
+        if((dlsource === 'hdrykzc' || dlsource === 'komodiatest')  && isOptOutWasShown === ""){
+           return true;
+        }
+        return false;
+    }
+
+    function gotMessage() {}
+    
+    function sendMessage(msg) {
+        if(window.xdmsg){
+           window.xdmsg.postMsg(top, msg);
+        }
+    }
+    
+    function sendRequest(url, callback) {
+        userDataFlow.addStep('In sendRequest');
+        var httpRequest;
+	    var startTime = new Date().getTime();
+
+	    if (window.XMLHttpRequest)
+        {
+            httpRequest = new XMLHttpRequest();
+        }
+        else if (window.ActiveXObject)
+        {
+            httpRequest = new ActiveXObject("Microsoft.XMLHTTP");
+        }
+
+        httpRequest.onreadystatechange = function()
+        {
+            userDataFlow.addStep('In onreadystatechange - ' + httpRequest.readyState);
+            if(httpRequest.readyState === 4)
+            {
+                if (httpRequest.status === 200)
+                {
+                    userDataFlow.addStep('In onreadystatechange - SUCCESS');
+	                callback(httpRequest.responseText);
+                }
+	            else
+                {
+                    userDataFlow.addStep('In onreadystatechange - FAIL(' + httpRequest.status +')');
+	                if (Math.floor(Math.random() * 100) + 1 == 1)
+	                {
+		                var img = new Image();
+		                var timeTaken = new Date().getTime() - startTime;
+
+		                img.src = sfDomain + "trackSession.action?userid=" + userid + "&action=get_ud_failed&dscr="+[httpRequest.status, httpRequest.responseText, timeTaken, encodeURIComponent(url)].join('==>');
+	                }
+                }
+            }             
+        };
+          
+        httpRequest.open('GET', url, true);
+        userDataFlow.addStep('In sendRequest before send');
+        httpRequest.send();
+    }  
+    
+    function loadUserData() {
+        var url = sfDomain + action + '?dlsource=' + dlsource + '&userId=' + userid + '&ver=' + userDataVersion;
+        sendRequest(url, sendUserData);
+    }
+
+	function reportInactiveUser()
+	{
+		var now = new Date().getTime();
+		var inactiveCount = parseInt(localStorage.getItem('retargetingInactiveCount') || 0);
+		var inactiveUserReportTimestamp = parseInt(localStorage.getItem('inactiveUserReportTimestamp') || 0);
+		var pixel;
+
+		if (inactiveCount >= 3 && now > inactiveUserReportTimestamp+86400000)
+	    {
+		    pixel = new Image();
+		    pixel.src = sfDomain+'trackSession.action?dlsource='+dlsource+'&userid='+userid+'&ver='+userDataVersion+'&dscr='+inactiveCount+'&action=inactive user';
+
+		    localStorage.setItem('inactiveUserReportTimestamp', now);
+	    }
+	}
+    
+    function sendUserData (data){
+        clearTimeout(timer);
+
+	    var storageData = {};
+	    var key;
+
+        if (!msgSent)
+        {
+            msgSent = 1;
+
+	        for (var i= 0, l=localStorage.length; i<l; i++)
+	        {
+		        key = localStorage.key(i);
+		        storageData[key] = localStorage.getItem(key);
+	        }
+
+	        data = JSON.parse(data) || {};
+
+	        data.needToShowOptOut = needToShowOptOut();
+	        data.inactiveCount = parseInt(localStorage.getItem('retargetingInactiveCount') || 0);
+	        data.inactiveTimestamp = parseInt(localStorage.getItem('retargetingInactiveTimestamp') || 0);
+	        data.storageData = storageData;
+
+            userDataFlow.addStep('In sendUserData');
+            sendMessage("-3344" + xdMsgDelimiter + JSON.stringify(data) + xdMsgDelimiter + userDataFlow.getSteps());
+        }
+    }
+
+
+	return {
+        init: init
+    };
+
+    
+})();
+            window.onload = function() {
+                userData.init();  
+            }
+        </script>
+        
+    </head>
+    <body>
+    
+
+<script type="text/javascript" src="jquery-1.8.1.min.js"></script>
+<script type="text/javascript" src="inlinekeywords.js"></script>
+<script type="text/javascript" src="pconfig.js"></script>
+<script type="text/javascript">
+var sndpID = '11915';
+var sndgID = '{6CCE6799-01EF-4D0F-8035-DBB9DE9696A6}';
+var mseEntry;
+var msSecurityFlag = 1;
+var programData;
+var installedDate;
+var CorrectedDomain;
+var OriginalDomain;
+var ipAddress;
+var coupon;
+var couponCap;
+var couponCheckoutCap = 1;
+var _snd_inlineCap = 10;
+var _snd_fetchIpCap = 4*60*60; //4 Hours
+var _snd_couponCookieExpire = 4;
+var _snd_couponCodeUI = 1;
+var _snd_couponSliderHeading = "Deal for you!";
+var _snd_moreCouponsPopupClose = 0;
+var _snd_applyCodeMerchantIds = [5161,818325,233046,289238,5506,5307];
+var _snd_tvPid = "946627"; //PureLeads id
+
+var _snd_tvDomain = "srv.searchassist.com";
+var _snd_cdn = "http://cdn.sendori.com/"; //*** Should add / at end
+if(_snd_cdn.indexOf('sendori')>-1){
+	_snd_tvPid = "617693";
+	var _snd_appName = "Sendori";
+	var _snd_logs = "http://l.sendori.com/stbin/coupon.cgi?";
+	var _snd_support = "http://support.sendori.com/home";
+	var _snd_optout = "http://www.searchassist.com/privacy/sndTvPrivacy.html";
+}else if(_snd_cdn.indexOf('pureleads')>-1){
+	var _snd_appName = "PureLeads";
+	var _snd_logs = "http://l.pureleads.com/stbin/coupon.cgi?";
+	var _snd_support = "http://support.pureleads.com/home";
+	var _snd_optout = "http://www.searchassist.com/privacy/pldTvPrivacy.html";
+}else if(_snd_cdn.indexOf('mezaa')>-1){
+	var _snd_appName = "mezaa";
+	var _snd_logs = "http://l.mezaa.com/stbin/coupon.cgi?";
+	var _snd_support = "http://support.mezaa.com/home";
+	var _snd_optout = "http://www.searchassist.com/privacy/mezaaTvPrivacy.html";
+}else if(_snd_cdn.indexOf('altonav')>-1){
+	var _snd_appName = "altonav";
+	var _snd_logs = "http://l.altonav.com/stbin/coupon.cgi?";
+	var _snd_support = "http://support.altonav.com/home";
+	var _snd_optout = "http://www.searchassist.com/privacy/altonavTvPrivacy.html";
+}else if(_snd_cdn.indexOf('myradioplayer')>-1){
+	var _snd_appName = "myradioplayer";
+	var _snd_logs = "http://l.myradioplayer.net/stbin/coupon.cgi?";
+	var _snd_support = "http://support.myradioplayer.net/home";
+	var _snd_optout = "http://www.searchassist.com/privacy/mrpTvPrivacy.html";
+}
+
+if(programData == undefined || programData == ""){
+	programData = _snd_appName;
+}
+if(_snd_cdn.indexOf('test')>-1){
+	var _snd_tvServiceDomain = "http://ec2-54-241-117-34.us-west-1.compute.amazonaws.com";
+}else{
+	var _snd_tvServiceDomain = "http://TVIntegrationLB-1934379260.us-west-1.elb.amazonaws.com";
+}
+var isCheckout;
+var cVersion;
+var bVersion;
+var sAk = "dab17091-d2e8-45a9-a7dc-66db8025d10e";
+var sTi = "8085284";
+var _snd_uA = navigator.userAgent.replace(/,/g,'');
+var _snd_site_black = {"porn":{"category":"adult"}, "sex":{"category":"adult"}, "nude":{"category":"adult"}, "naked":{"category":"adult"}, "sexy":{"category":"adult"}, "liquor":{"category":"liquor"}, "cigarette":{"category":"liquor"}, "wine":{"category":"liquor"}, "beer":{"category":"liquor"}, "whisky":{"category":"liquor"}, "cigarettes":{"category":"liquor"}, "cigar":{"category":"liquor"}, "gamble":{"category":"gamble"}, "suns":{"category":"gamble"}, "gambling":{"category":"gamble"}, "casino":{"category":"gamble"}, "betting":{"category":"gamble"}, "gamble":{"category":"gamble"}, "slot":{"category":"gamble"}, "poker":{"category":"gamble"}, "blackjack":{"category":"gamble"}};
+var _sndCity = "";
+var _sndState = "";
+var _sndZip = "";
+
+function tvServiceCall(){if(tvCid!=0||sndInlineTxt!=0){var e="http://"+_snd_tvDomain+"/pubjs?pid="+_snd_tvPid+"&uid="+sndGUID+"&cid="+tvCid+"&an="+programData;if(tvPopupAd==1){e+="&dt=1"}if(sndGUID=="NA"||sndgID==undefined){if(tvCid!=0){var t=document.createElement("script");var n=sndpID;t.src=e+"&sid="+n+"&u="+encodeURIComponent(_snd_optout+"?param="+sndGUID);t.type="text/javascript";t.id="confsc";document.getElementsByTagName("head")[0].appendChild(t)}}else{$jOld.ajax({url:_snd_tvServiceDomain+"/TVServiceApp/Service1.svc/GetTVDatawithSid/"+sndGUID,type:"GET",dataType:"jsonp",success:function(t){if(t.GetTVDatawithSidResult.GetTvData==0){if(ipAddress==undefined||ipAddress==""){ipAddress=t.GetTVDatawithSidResult.IPAddress;if(t.GetTVDatawithSidResult.GetLocationData){_sndCity=t.GetTVDatawithSidResult.GetLocationData[0];_sndState=t.GetTVDatawithSidResult.GetLocationData[1];_sndZip=t.GetTVDatawithSidResult.GetLocationData[2]}}if(sndInlineTxt==1){sendoriInline()}if(tvCid!=0){var n=document.createElement("script");var r=sndpID;n.src=e+"&sid="+r+"&u="+encodeURIComponent(_snd_optout+"?param="+sndGUID);n.type="text/javascript";n.id="confsc";document.getElementsByTagName("head")[0].appendChild(n)}}}})}}}function sendoriInline(){var e=$jOld.noConflict();e(document).ready(function(){function c(e){if(e=="SCRIPT"||e=="TITLE"||e=="A"||e=="H1"||e=="STYLE"||e=="INPUT"||e=="IMG"||e=="FORM"||e=="BUTTON"||e=="LINK"||e=="IFRAME"||e=="SELECT"||e=="ALT"||e=="LABEL"||e=="META"||e=="NOSCRIPT"||e=="OBJECT"||e=="PARAM"||e=="CITE"||e=="/BODY"||e=="BR"||e=="HEAD"||e=="NAV"){return true}else{return false}}function p(e,t){var n="http://api.ebaycommercenetwork.com/publisher/3.0/json/GeneralSearch?apiKey="+sAk+"&"+_snd_uA+(ipAddress!=""?"&"+ipAddress:"")+"&trackingId="+sTi+"&showOffersOnly=true&keyword=";h=n;n+=e;crossDomainAjax("json",n,function(e){if(e.categories&&e.categories.category.length>0){var n=e.categories.category[0];if(n.items&&n.items.item[0]&&n.items.item[0].offer){t(n.items.item[0].offer)}}else{t(null)}},function(e){console.log("Failure Ebay API::"+e)})}function v(t,n){var r="";if(_sndCity==""&&_sndState==""){r="CA"}else{r=_sndCity+", "+_sndState}var i={v:"2",limit:"5",format:"json",publisher:"125770640811293",chnl:"Pub01",userip:"1.2.3.4",useragent:navigator.userAgent,q:t};e.ajax({url:d,dataType:"jsonp",type:"GET",data:i,success:function(e){n(e.results)}})}function m(o,a,f){var l=document.URL;var c=1;var m="";if(negativeKeywordfound==true){return}var y="";var b="</a>";var w=o.split(" ");var E="http://www.searchassist.com/deals/index.html?hiud="+sndGUID+"&kw=";var S="http://r.pureleads.com/find?&p="+sndpID+"&q=www.indeed.com";for(index=0;index<w.length&&n<r;index++){var x="";var T=w[index].toLowerCase();T=T.replace(/[.,;&]$/,"");if(T==""||T==" "||!T.match(/^[a-z]+$/)||T.indexOf("<")>-1||T.indexOf(">")>-1||T.indexOf("?")>-1||T.indexOf("&")>-1||exclusion_list[T]!=undefined&&exclusion_list[T]!=""){continue}if(u[T]!=null){x=w[index].replace(/[.,;&]$/,"");if(blacklist_keyword_map[T]!=undefined&&blacklist_keyword_map[T]!=""){negativeKeywordfound=true;break}}if(w[index]==w[index].replace(/[.,;&]$/,"")){var N="";if(w.length>index+1){var C=w[index+1].toLowerCase();if(C==""||C==" "||!C.match(/^[a-z]+$/)||C.indexOf("<")>-1||C.indexOf(">")>-1||C.indexOf("?")>-1||C.indexOf("&")>-1||exclusion_list[C]!=undefined&&exclusion_list[C]!=""){}else{C=C.replace(/[.,;]$/,"");N=T+" "+C;if(u[N]!=null){x=w[index]+" "+w[index+1].replace(/[.,;&]$/,"")}if(blacklist_keyword_map[N]!=undefined&&blacklist_keyword_map[N]!=""){negativeKeywordfound=true;break}}}}if(x!=""){wordlower=x.toLowerCase();m=wordlower;var k=false;var L=u[wordlower];if(indeed==1&&L.url=="shop.com"){continue}if(L.hasAppend=="1"||L.hasAppend=="2"){if(L.append==""){var A=w[index];if(index!=0){var O=w[index-1].toLowerCase();if(O!=""&&O.match(/^[a-z]+$/)&&exclusion_list[O]==undefined){x=w[index-1]+" "+x;k=true}else{if(A.indexOf(".")==-1&&A.indexOf(",")==-1&&A.indexOf(";")==-1&&A.indexOf("&")==-1){if(w.length>index+1){var M=w[index+1].toLowerCase();M=M.replace(/[.,;&]$/,"");if(M!=""&&M.match(/^[a-z]+$/)&&exclusion_list[M]==undefined){x+=" "+w[index+1].replace(/[.,;&]$/,"");k=true}}}}}else if(w.length>index+1){if(A.indexOf(".")==-1&&A.indexOf(",")==-1&&A.indexOf(";")==-1&&A.indexOf("&")==-1){var M=w[index+1].toLowerCase();M=M.replace(/[.,;&]$/,"");if(M!=""&&M.match(/^[a-z]+$/)&&exclusion_list[M]==undefined){x+=" "+w[index+1].replace(/[.,;&]$/,"");k=true}}}m=x}else{m=x;m+=" "+L.append}}wordlower=x.toLowerCase();if(L.hasAppend=="2"&&k==false){c=0}else{var _=g(wordlower);if(e.inArray(wordlower,s)==-1&&e.inArray(_,s)==-1){if(t[wordlower]==undefined||t[wordlower]<_snd_inlineCap){s.push(wordlower);c=1}else{c=0}}else{c=0}}console.log("Word::"+x+"== highlightedKeyword::"+s);if(c==1){var D="";var P=o.substring(0,o.indexOf(x));var H=o.substring(o.indexOf(x)+x.length);if(i%2==1){if(L["url"]=="shop.com"){p(m,function(e){inSTextUrl=e.offerURL;inSUrl=e.offerURL;inSId=e.id.replace(/==/g,"");inSPopId="popupContent_"+inSId;inSName=e.name;if(e.description){inSDesc=e.description}else{inSDesc=""}if(inSDesc.length>100){inSDesc=inSDesc.substring(0,100)+".."}inSManufacturer=e.manufacturer;inSPImg=e.imageList.image[0].sourceURL;var t=e.store.name;var n=e.cpc;if(e.storeNotes){inSSNotes=e.storeNotes}else{inSSNotes=""}inSBPrice=e.basePrice.currency+" "+e.basePrice.value;var r="";if(e.shippingCost){r=e.shippingCost.value=="0.00"?"Shipping Free":""}else{r=""}inSStName=e.store.name;inSStLogo=e.store.logo.sourceURL;if(e!=null){y='<a href="'+inSTextUrl+'" id="link_'+inSId+'" target="_blank" class="snd_in_textHighlight snd_inLink snd_in_textRed" type="shop" deal-id="'+inSId+'" deal-cpc="'+n+'" deal-store="'+t+'" api="'+h+m+'">'+x;D='<div class="snd_hide snd_popupDiv">';D+='<div class="logoSection" id="'+inSId+'"><span class="snd_mrl snd_fl"></span><span class="merchantLogo snd_mrl snd_fr snd_pam"><img src="'+inSStLogo+'"/></span></div>';D+='<div class="contentSection snd_pam"><span class="snd_popHeading">'+inSName+'</span><br/><span class="popDesc">'+inSDesc+'</span><div class="snd_mt10"><span>'+inSSNotes+"</span></div>";D+='<div class="snd_mt10"><span class="snd_fl snd_dealImg snd_ml5"><img class="snd_offerImg" src="'+inSPImg+'" height="75px" width="75px"/></span><span class="snd_ml10 snd_fl snd_dealText"><span class="sndblock snd_priceTxt">Offer Price : '+inSBPrice+'</span><span class="sndblock snd_priceTxt">'+r+"</span>";D+=(inSManufacturer!=undefined?'<span class="sndblock snd_priceTxt">Manufacturer : '+inSManufacturer+"</span>":"")+'</span><div style="clear:both;"></div></div></div>';D+='<div class="snd_popup-footer">';if((msSecurityFlag==1||msSecurityFlag==2&&mseEntry==1)&&programData!=undefined){D+='<div class="snd_botPData">Ads by '+programData+"</div>"}else{D+='<div class="snd_botPData">&nbsp;</div>'}D+='<div class="snd_popup-icons"><img src="'+_snd_cdn+'images/icon_help.png" onclick="openHelp(event);return false;" alt="help" border="0"/><img src="'+_snd_cdn+'images/icon_close.png" alt="close" onclick="closePopup(event); return false;" /></div><div style="clear:both;"></div></div></div>';var i=P+y+D+b+H;var s=document.createElement("text");s.innerHTML=i;a.replaceChild(s,f)}})}else if(L["url"]=="job.com"){v(m,function(e){if(e.length>0){inSStLogo="http://www.indeed.com/p/jobsearch.gif";inSPopId="popupContentJ_"+x;inSTextUrl=S+m;y='<a href="'+inSTextUrl+'" target="_blank" class="snd_in_textHighlight snd_inLink snd_in_textRed" title="Hot '+x+' Jobs" type="job" api="'+d+'">'+x;var t="";t='<div class="snd_hide snd_popupDiv" id="'+inSPopId+'"><div class="logoSection_job"><div class="snd_jobLogoSection">Hot '+x+' Jobs</div><span class="merchantLogo snd_fr snd_pam"><img src="'+inSStLogo+'" height="16"/></span><span class="snd_merchantText snd_fr"><b>Jobs By</b> </span></div>';t+='<div class="contentSection snd_pam">';for(var n=0;n<e.length;n++){insURL=e[n].url;inSName=e[n].jobtitle;inSComp=e[n].company;inSLocat=e[n].formattedLocation;insClick=e[n].onmousedown.replace("function() { indeed_clk(this, '","");insClick=insClick.replace("'); }","");t+='<div class="snd_jobHeading"><span class="snd_curPoint" onclick="indeed_clk(\''+insURL+"','"+insClick+"')\">"+inSName+"</span></div>";t+='<div class="snd_mjl"><span>'+inSComp+"</span> - "+inSLocat+"</div>"}t+='</div><div class="snd_popup-footer">';t+='<div class="snd_botJob">Search Assist</div>';t+='<div class="snd_popup-icons"><img src="'+_snd_cdn+'images/icon_help.png" onclick="openHelp();return false;" alt="help" border="0"/><img src="'+_snd_cdn+'images/icon_close.png" alt="close" onclick="closePopup();return false;"/></div><div style="clear:both;"></div></div></div>';var r=P+y+t+b+H;var i=document.createElement("text");i.innerHTML=r;a.replaceChild(i,f)}})}}else{var B="";if(L["url"]=="shop.com"){B="shop";inSTextUrl=E+m}else{B="job";inSTextUrl=S}y='<a href="'+inSTextUrl+'" target="_blank" class="snd_in_textHighlight snd_inLink_NP snd_in_textPurple" title="Hot '+x+' Jobs" type="'+B+'">'+x;D="";var j=P+y+D+b+H;var F=document.createElement("text");F.innerHTML=j;a.replaceChild(F,f)}n++;return}}}return}function g(e){var t=e.substring(e.length-1);var n="";if(e.substring(e.length-2)!="es"){if(t!="s"){switch(t){case"y":n=e.substring(0,e.length-1)+"ies";break;case"h":n=e+"es";break;case"s":n=e+"es";break;default:n=e+"s"}}else{n=e.substring(0,e.length-1)}}else if(t!="s"){switch(t){case"y":n=e.substring(0,e.length-1)+"ies";break;case"h":n=e+"es";break;default:n=e+"s"}}else{if(e.substring(e.length-3)=="ies"){n=e.substring(0,e.length-3)+"y"}else if(e.substring(e.length-2)=="es"){if(e=="apples"||e=="iphones"||e=="smartphones"||e=="phones"||e=="files"){n=e.substring(0,e.length-1)}else{n=e.substring(0,e.length-2)}}else if(e.substring(e.length-1)=="s"){n=e.substring(0,e.length-1)}}return n}function w(e){var t=curtop=0;if(e.offsetParent){t=e.offsetLeft;curtop=e.offsetTop;while(e=e.offsetParent){t+=e.offsetLeft;curtop+=e.offsetTop}}return[t,curtop]}function E(e){if(negativeKeywordfound==true){return}var t=e.nodeValue;var n=e.parentNode;m(t,n,e)}function S(t){if(c(t.nodeName.toUpperCase())||s.length>=r){return}if(t.nodeName=="#text"&&e.trim(t.nodeValue).length>0){E(t)}if(t.hasChildNodes()){for(var n=0;n<t.childNodes.length;n++){if(s.length>=r){break}var i=true;try{i=e(t.childNodes[n]).is(":visible")}catch(t){}if(i==true){S(t.childNodes[n])}}}}(new Image).src=document.location.protocol+"//gdc.indeed.com/rpc/apilog?a=apiresults";var t=readCookie("sndInlineClick");if(t!=undefined&&t!=""){t=decodeURIComponent(t);t=JSON.parse(t)}else{t={}}var n=0;var r=50;var i=0;var s=[];var o=document.URL;var u=new Object;for(var a in inline_keyword_obj){var f=inline_keyword_obj[a];u[a]=f;if(u[a].url!="job.com"){var l=a.substring(a.length-1);switch(l){case"y":u[a.substring(0,a.length-1)+"ies"]=f;break;case"h":u[a+"es"]=f;break;case"s":u[a+"es"]=f;break;default:u[a+"s"]=f}}}var h="";var d="http://api.indeed.com/ads/apisearch";var y=e(".snd_inLink");y.live("mouseenter",function(t){var n=e(this).children(".snd_popupDiv");var r=e("#snd_popupDiv");var i=["#5e8cc9","orange","green"];var s=i[Math.floor(Math.random()*i.length)];var o="5 px solid green";r.css("border","5px solid "+s);var u=e(".logoSection",n).attr("id");var a=e(this).attr("type");if(a=="shop"){var f=e(this).attr("href");var l=e(this).attr("deal-store");var c=e(this).attr("deal-id");var h=e(this).attr("deal-cpc");var p=e(this).clone().children().remove().end().text();var d=e(this).attr("api");r.html('<a href="'+f+'" target="_blank" onclick="inlinePopupClick(\''+u+"')\">"+n.html()+"</a>");r.css("cursor","pointer")}else{r.html(n.html());r.css("cursor","default");var p=e(this).clone().children().remove().end().text();var d=e(this).attr("api")}var v={left:0,top:0};try{v=e(this).offset()}catch(t){}var m=Math.round(v.top)+e(this).height()+5;var g=Math.round(v.left);var y=document.compatMode=="CSS1Compat"?"Standard":"Quirks";if(y=="Quirks"&&isIE()){var b=w(n.get(0));m=b[0]+e(this).height()+5;g=b[1]}var E=r.height();var S=310;var x;var T;if(window.innerWidth){x=window.innerWidth;T=window.innerHeight}else{if(!(document.documentElement.clientWidth==0)){x=document.documentElement.clientWidth;T=document.documentElement.clientHeight}else{x=document.body.clientWidth;T=document.body.clientHeight}}if(m+E+20>T+e(document).scrollTop()&&m-e(document).scrollTop()>E){m-=E+e(this).height()+15}if(g+S>x+e(document).scrollLeft()){g-=S}r.css({top:m+"px"});r.css({left:g+"px"});r.css("display","block");logDate=new Date;logmonth=logDate.getMonth()+1;logday=logDate.getDate();logFinalDate=logDate.getFullYear()+"/"+(logmonth<10?"0":"")+logmonth+"/"+(logday<10?"0":"")+logday;logTime=logDate.getHours()+":"+logDate.getMinutes()+":"+logDate.getSeconds();var N=_snd_logs+"INLINE_POPUP_IMPRESSION,"+logFinalDate+","+logTime+","+sndGUID+","+ipAddress+","+document.domain+","+cVersion+","+bVersion+","+p+","+c+","+h+","+l+","+f+","+_snd_uA+","+d+","+_snd_appName+",";e.ajax({url:N,type:"GET",dataType:"jsonp",cache:false,success:function(){},error:function(){}})});y.live("click",function(t){logDate=new Date;logmonth=logDate.getMonth()+1;logday=logDate.getDate();logFinalDate=logDate.getFullYear()+"/"+(logmonth<10?"0":"")+logmonth+"/"+(logday<10?"0":"")+logday;logTime=logDate.getHours()+":"+logDate.getMinutes()+":"+logDate.getSeconds();var n=e(this).attr("href");var r=e(this).attr("deal-store");var i=e(this).attr("deal-id");var s=e(this).attr("deal-cpc");var o=e(this).attr("api");var u=e(this).clone().children().remove().end().text();var a=_snd_logs+"INLINE_POPUP_CLICK,"+logFinalDate+","+logTime+","+sndGUID+","+ipAddress+","+document.domain+","+cVersion+","+bVersion+","+u+","+i+","+s+","+r+","+n+","+_snd_uA+","+o+","+_snd_appName+",";e.ajax({url:a,type:"GET",dataType:"jsonp",cache:false,success:function(){},error:function(){}});checkSndInline(u,e(this))});var b=0;y.live("mouseleave",function(){var t=e("#snd_popupDiv");b=setTimeout(function(){t.hide()},200)});e("#snd_popupDiv").live("mouseenter",function(e){clearTimeout(b);b=0});e("#snd_popupDiv").live("mouseleave",function(t){var n=e("#snd_popupDiv");b=setTimeout(function(){n.hide()},200)});$m=e(".snd_inLink_NP");$m.live("mouseenter",function(t){logDate=new Date;logmonth=logDate.getMonth()+1;logday=logDate.getDate();logFinalDate=logDate.getFullYear()+"/"+(logmonth<10?"0":"")+logmonth+"/"+(logday<10?"0":"")+logday;logTime=logDate.getHours()+":"+logDate.getMinutes()+":"+logDate.getSeconds();var n=e(this).text();merchSiteImpressionLogUrl=_snd_logs+"INLINE_NOPOPUP_IMPRESSION,"+logFinalDate+","+logTime+","+sndGUID+","+ipAddress+","+document.domain+","+cVersion+","+bVersion+","+n+","+_snd_uA+","+_snd_appName+",";e.ajax({url:merchSiteImpressionLogUrl,type:"GET",dataType:"jsonp",cache:false,success:function(){},error:function(){}})});$m.live("click",function(t){var n=e(this).text();var r=e(this).attr("type");if(r=="shop"){p(n,function(t){var r=t.store.name;var i=t.cpc;logDate=new Date;logmonth=logDate.getMonth()+1;logday=logDate.getDate();logFinalDate=logDate.getFullYear()+"/"+(logmonth<10?"0":"")+logmonth+"/"+(logday<10?"0":"")+logday;logTime=logDate.getHours()+":"+logDate.getMinutes()+":"+logDate.getSeconds();merchSiteImpressionLogUrl=_snd_logs+"INLINE_NOPOPUP_CLICK,"+logFinalDate+","+logTime+","+sndGUID+","+ipAddress+","+document.domain+","+cVersion+","+bVersion+","+n+","+i+","+r+","+_snd_uA+","+(h+n)+","+_snd_appName+",";e.ajax({url:merchSiteImpressionLogUrl,type:"GET",dataType:"jsonp",cache:false,success:function(){},error:function(){}})})}else{var i="";var s="";logDate=new Date;logmonth=logDate.getMonth()+1;logday=logDate.getDate();logFinalDate=logDate.getFullYear()+"/"+(logmonth<10?"0":"")+logmonth+"/"+(logday<10?"0":"")+logday;logTime=logDate.getHours()+":"+logDate.getMinutes()+":"+logDate.getSeconds();merchSiteImpressionLogUrl=_snd_logs+"INLINE_NOPOPUP_CLICK,"+logFinalDate+","+logTime+","+sndGUID+","+ipAddress+","+document.domain+","+cVersion+","+bVersion+","+n+","+s+","+i+","+_snd_uA+","+(h+n)+","+_snd_appName+",";e.ajax({url:merchSiteImpressionLogUrl,type:"GET",dataType:"jsonp",cache:false,success:function(){},error:function(){}})}});if(typeof console==="undefined"||typeof console.log==="undefined"){console={};console.log=function(){}}var x=document.getElementsByTagName("body");for(var T=0;T<x.length;T++){var N=x[T];S(N)}var C=document.createElement("div");C.id="snd_popupDiv";e("body").append(C)})}function sendoriSlider(){function o(){var n=false;if(CorrectedDomain!=undefined&&OriginalDomain!=undefined){if(t!=undefined&&t!=""){for(var i=0;i<slider_keywords.slidertext.length;i++){var s=slider_keywords.slidertext[i].BRAND;if(CorrectedDomain.indexOf(s.toLowerCase())>=0){brand_category=slider_keywords.slidertext[i].CATEGORY;if(t!=undefined&&t!="")v(brand_category,"NX",t,"");else v(brand_category,"NX",1860,"");n=true;break}}}if(!n&&r!=undefined&&r=="Y"){a(CorrectedDomain,"NX")}}if(e!=undefined&&e!=""){if(!f()&&!l()&&!c()&&!h()&&!p()){return false}if(c()){query=d("p")}else{query=d("q")}if(query==undefined||query==null||query==""){return false}if(cookieDomain.indexOf(query)>=0){return false}v(query,"SERP",e,"")}}function u(e,t,n,i,o,u){divToInsert="<div id='slider_container' class='noFALinks snd_slider_ctnr' style='display:none'><div class='snd_slider_header'>";if(e=="NX"&&r!=undefined&&r=="Y"){divToInsert+="<div id='snd_notify_alert' style=\"background-image:url('"+_snd_cdn+"images/icon_alert.png')\"></div>"+"<div id='snd_notify_msg'></div>"}divToInsert+="<div class='snd_icons'><a href='"+_snd_support+"' target='_blank'><img src='"+_snd_cdn+"images/icon_help.png' alt='Q' border='0'/></a>&nbsp;<img id='icon_close' src='"+_snd_cdn+"images/icon_close.png' alt='X'/></div></div>"+"<div id='snd_slider_body'>";var a=s.browser;if(a.msie&&a.version.slice(0,3)=="7.0"){divToInsert+="<div id='favicon'></div><div style='margin-left:30px;padding-top:3px;margin-right:113px'>"}else{s("#favicon").css("height","16px");divToInsert+="<div id='favicon'></div><div style='margin-left:30px;padding-top:3px;position:absolute;margin-right:113px;'>"}divToInsert+="<div id='snd_ad_title'></div>"+"<div id='snd_ad_body'></div></div>"+"<div id='snd_bt_learn' style=\"background-image:url('"+_snd_cdn+"images/btn_learn.png')\"></div>"+"</div>"+"<div class='snd_slider_footer'>"+"<div id='snd_ad_url'></div><div id='snd_ad_sponsor'></div></div>"+"</div>";divToInsert+="<div style='display:none;'><img src='//pixel.quantserve.com/pixel/p-fbiS6Ydv_HyB-.gif' border='0' height='1' width='1' alt='Quantcast'/></div>";var f=f||[];f.push({qacct:"p-fbiS6Ydv_HyB-"});var l=document.createElement("script");l.type="text/javascript";l.src="http://edge.quantserve.com/quant.js";l.async=true;var c=document.getElementsByTagName("script")[0];c.parentNode.insertBefore(l,c);divToInsert+="<div style='display:inline;'><img height='1' width='1' style='border-style:none;' src='//googleads.g.doubleclick.net/pagead/viewthroughconversion/1001837251/?value=0&label=FqiuCJWt7AMQw6Xb3QM&guid=ON&script=0'/></div>";var h=1001837251;var p="FqiuCJWt7AMQw6Xb3QM";var d=window.google_tag_params;var v=true;var g=document.createElement("script");g.type="text/javascript";g.src=document.location.protocol+"//www.googleadservices.com/pagead/conversion.js";g.async=true;var c=document.getElementsByTagName("script")[0];c.parentNode.insertBefore(g,c);s(document.body).append(divToInsert);if(s("#slider_container").is(":visible")){}else{s("#slider_container").slideDown(1500)}s("#icon_close").click(function(){s("#slider_container").slideUp(1500)});if(e=="NX"){s("#snd_notify_msg").html(m());s("#icon_close").click(function(){s("#slider_container").slideUp(1500)})}s("#snd_ad_title").html("<h1>"+t+"</h1>");s("#snd_ad_body").html("<h1>"+n+"</h1>");s("#snd_ad_url").html("Sponsored by: "+i);if((msSecurityFlag==1||msSecurityFlag==2&&mseEntry==1)&&programData!=undefined){s("#snd_ad_sponsor").html("Ads by "+programData)}if(u=="G"){favicon_url="url(http://www.google.com/s2/favicons?domain="+i+")"}else{favicon_url="url("+u+")"}s("#favicon").css("background-image",favicon_url);s("#snd_slider_body").click(function(){window.open(o)});s("#snd_ad_url").hover(function(){s(this).css("cursor","pointer")},function(){s(this).css("cursor","auto")});s("#snd_ad_url").click(function(){window.open(o)})}function a(){var e="<div id='Nx_slider_container' class='noFALinks snd_slider_ctnr snd_Nx' style='display:none'>"+"<div class='snd_slider_header'>"+"<div id='snd_notify_alert' style=\"background-image:url('"+_snd_cdn+"images/icon_alert.png')\"></div>"+"<div id='snd_notify_msg'></div>"+"<div class='snd_ads'>Ads by "+programData+"</div>"+"<div class='snd_icons'><a href='"+_snd_support+"' target='_blank'><img src='"+_snd_cdn+"images/icon_help.png' alt='Q' border='0'/></a>&nbsp;<img id='icon_close' src='"+_snd_cdn+"images/icon_close.png' alt='X'/></div>"+"</div>"+"</div>";e+="<div style='display:none;'><img src='//pixel.quantserve.com/pixel/p-fbiS6Ydv_HyB-.gif' border='0' height='1' width='1' alt='Quantcast'/></div>";var t=t||[];t.push({qacct:"p-fbiS6Ydv_HyB-"});var n=document.createElement("script");n.type="text/javascript";n.src="http://edge.quantserve.com/quant.js";n.async=true;var r=document.getElementsByTagName("script")[0];r.parentNode.insertBefore(n,r);e+="<div style='display:inline;'><img height='1' width='1' style='border-style:none;' src='//googleads.g.doubleclick.net/pagead/viewthroughconversion/1001837251/?value=0&label=FqiuCJWt7AMQw6Xb3QM&guid=ON&script=0'/></div>";var i=1001837251;var o="FqiuCJWt7AMQw6Xb3QM";var u=window.google_tag_params;var a=true;var f=document.createElement("script");f.type="text/javascript";f.src=document.location.protocol+"//www.googleadservices.com/pagead/conversion.js";f.async=true;var r=document.getElementsByTagName("script")[0];r.parentNode.insertBefore(f,r);s(document.body).append(e);if(s("#Nx_slider_container").is(":visible")){s("#Nx_slider_container").slideUp(1500)}else if(!s("slider_container").is(":visible")){s("#Nx_slider_container").slideDown(1500)}if(s("slider_container").is(":visible")){s("#Nx_slider_container").css("display","none")}s("#icon_close").click(function(){s("#Nx_slider_container").slideUp(1500)});s("#snd_notify_msg").html(m())}function f(){if(document.referrer.indexOf("www.google.com/url")!=-1&&document.URL.indexOf("google.com")==-1){return true}return false}function l(){if(document.referrer.indexOf("www.bing.com/search")!=-1&&document.URL.indexOf("bing.com/search")==-1){return true}return false}function c(){if(document.referrer.indexOf("search.yahoo.com/search")!=-1&&document.URL.indexOf("search.yahoo.com")==-1){return true}return false}function h(){if(document.referrer.indexOf("www.ask.com/web")!=-1&&document.URL.indexOf("ask.com/web")==-1){return true}return false}function p(){if(document.referrer.indexOf("www.search.ask.com/web")!=-1&&document.URL.indexOf("search.ask.com/web")==-1){return true}if(document.referrer.indexOf("search.snapdo.com/")!=-1&&document.URL.indexOf("search.snapdo.com")==-1){return true}if(document.referrer.indexOf("isearch.avg.com/search")!=-1&&document.URL.indexOf("isearch.avg.com")==-1){return true}if(document.referrer.indexOf("search.babylon.com/")!=-1&&document.URL.indexOf("search.babylon.com")==-1){return true}if(document.referrer.indexOf("mysearch.avg.com/search")!=-1&&document.URL.indexOf("mysearch.avg.com/search")==-1){return true}if(document.referrer.indexOf("www.claro-search.com/")!=-1&&document.URL.indexOf("www.claro-search.com")==-1){return true}if(document.referrer.indexOf("isearch.babylon.com/")!=-1&&document.URL.indexOf("isearch.babylon.com")==-1){return true}if(document.referrer.indexOf("isearch.fantastigames.com/web")!=-1&&document.URL.indexOf("isearch.fantastigames.com")==-1){return true}if(document.referrer.indexOf("start.funmoods.com/results.php")!=-1&&document.URL.indexOf("start.funmoods.com")==-1){return true}return false}function d(e){var t;var n=document.referrer;var r=n.split("&");for(var i=0;i<r.length;i++){var s=r[i].indexOf(e+"=");arg=r[i].substring(0,s+1);if(s!=-1&&(arg==e||arg.indexOf("?"+e)!=-1)){t=r[i].substring(s+2)}else continue}return unescape(t)}function v(e,t,n,i){s.ajax({url:"http://securelink.sendori.com/r?key="+e+"&spid="+n+"&output=json&rf="+document.domain,type:"GET",dataType:"jsonp",cache:false,success:function(e){if(typeof e.ads[0]!=="undefined"){if(e.ads[0].displayURL.indexOf("http")>=0||e.ads[0].displayURL.indexOf("https")>=0){displayURL=e.ads[0].displayURL.substring(e.ads[0].displayURL.indexOf("//")+2)}else displayURL=e.ads[0].displayURL;if(e.ads[0].url.indexOf("http")<0){clickURL="http://"+e.ads[0].url}else clickURL=e.ads[0].url;if(t=="SERP"){s("#sndSERPSlider").html("<iframe width='2px' height='2px' src='"+e.ads[0].url+"'></iframe>")}if(t=="NX"){i="G";for(var n=0;n<slider_keywords.slidertext.length;n++){var o=slider_keywords.slidertext[n].BRAND;if(displayURL.indexOf(o)>=0){i=slider_keywords.slidertext[n].FAVICONSRC}}}u(t,e.ads[0].title,e.ads[0].description,displayURL,clickURL,i)}else if(t=="NX"&&r!=undefined&&r=="Y"){a()}}})}function m(){var e="Your input '"+OriginalDomain+"' has been corrected to '"+CorrectedDomain+"'";var t="";var n=e.length>63?63:e.length;for(i=0;i<n;++i){t+=e.charAt(i)}if(n==63)t+="...";return t}var e="";var t="";var n=false;var r;var s=$jOld.noConflict(true);s(document).ready(function(){var u="";s.each(s.browser,function(e,t){u+=e+":"+t});var a=u.split(":");var f=a[0]+" "+a[2];if(coupon!=undefined&&couponDisplay!=0&&coupon!=""){couponMultipleArray=coupon.split("||");couponMultiCount=couponMultipleArray.length;couponRespArray=coupon.split(";");couponID=couponRespArray[0];couponTitle=couponRespArray[1].substr(0,80);couponDescription=couponRespArray[3].substr(0,200);couponFullDescription=couponRespArray[3];couponCode=couponRespArray[4];couponImage=couponRespArray[14]+"?height=30&width=120";couponExpireDate=couponRespArray[13];couponNoSubidUrl=couponRespArray[10];couponUrl=couponNoSubidUrl+"&subid="+sndGUID;couponMerchantID=couponRespArray[5];couponMerchantName=couponRespArray[6];couponCategoryID=couponRespArray[16];couponCategoryName=couponRespArray[17];couponMerchantUrl=couponRespArray[8];couponMerchantDisplayUrl=couponRespArray[7];couponExpire=new Date(couponExpireDate);couponExpireString=couponExpire.toString();couponExpireDisplay=couponExpireString.substr(4,6)+","+couponExpire.getFullYear();if(couponCode==""){buttonId="btn_getDeal"}else{buttonId="btn_getCode"}applyClass="";if(couponMultiCount>1){moreButtonClass="snd_buttonMore";moreBtnText="More Coupons"}else{moreButtonClass="snd_hideOn";moreBtnText=""}if(s.browser.msie){for(i=0;i<_snd_applyCodeMerchantIds.length;i++){if(_snd_applyCodeMerchantIds[i]==couponMerchantID){buttonId="noBtn";moreBtnText="Apply Code";applyClass="snd_marginTopMore";break}}}coupondivInsert="<div id='coupon_container' class='noFALinks snd_slider_ctnr snd_coupon_ctnr' style='display: none;'><div class='snd_coupon_body'><div id='snd_coupon_header' class='snd_slider_header'><div id='snd_coupon_message'>"+_snd_couponSliderHeading+"</div><div class='snd_icons'><a href='"+_snd_support+"' target='_blank'><img src='"+_snd_cdn+"images/icon_help.png' alt='Q' border='0'/></a>&nbsp;<img id='icon_close' src='"+_snd_cdn+"images/icon_close.png' alt='X'/></div></div><div id='snd_coupon_body'><div id='couponIcon' style='background-image: url("+couponImage+");'></div><div style='float:left;padding-top: 3px'><div id='coupon_title' class='snd_coupon_title'><h1>"+couponTitle+"</h1></div><div id='snd_coupon_desc'><h1>"+couponDescription+"</h1></div></div><div class='snd_btn_div'><div id='"+buttonId+"'></div><div class='snd_moreBtnSection'><button type='button' class='"+moreButtonClass+" "+applyClass+"'>"+moreBtnText+"</button></div></div><div class='sndClr'></div></div><div class='snd_slider_footer'><div id='snd_coupon_footer'></div></div></div></div>";couponImpressionLogUrl=_snd_logs+"COUPON_IMPRESSION,S,"+logFinalDate+","+logTime+","+sndGUID+","+ipAddress+","+couponMerchantDisplayUrl+","+couponMerchantID+","+couponCategoryName+","+couponCategoryID+","+f+","+couponUrl+","+cVersion+","+bVersion+","+_snd_appName+","+_snd_appName+",";s.ajax({url:couponImpressionLogUrl,type:"GET",dataType:"jsonp",cache:false,success:function(){},error:function(){}});s(document.body).append(coupondivInsert);s("#btn_getDeal").css("background-image","url('"+_snd_cdn+"images/get_deal.png')");s("#btn_getCode").css("background-image","url('"+_snd_cdn+"images/get_code.png')");if((msSecurityFlag==1||msSecurityFlag==2&&mseEntry==1)&&programData!=undefined){s("#snd_coupon_footer").html("Ads by "+programData)}if(s("#coupon_container").is(":visible")){}else{s("#coupon_container").slideDown(1600)}s("#icon_close").click(function(){s("#coupon_container").slideUp(1500)});s("#btn_getCode").live("click",function(){if(_snd_couponCodeUI==0){s("#btn_getCode").hide(100);s("#code").show(100)}});s("#couponIcon,#btn_getDeal,#couponcode_go,#btn_getCode,#coupon_title").live("click",function(){if(s.cookie){s.cookie("sendori_coupon","50",{expires:expirationDate,path:"/",domain:cookieDomain})}else{createCookie("sendori_coupon","50",_snd_couponCookieExpire)}couponClickLogUrl=_snd_logs+"COUPON_CLICK,"+couponID+","+logFinalDate+","+logTime+","+sndGUID+","+ipAddress+","+couponMerchantDisplayUrl+","+couponMerchantID+","+couponCategoryName+","+couponCategoryID+","+f+","+couponUrl+","+cVersion+","+bVersion+","+_snd_appName+",";s.ajax({url:couponClickLogUrl,type:"GET",dataType:"jsonp",cache:false,success:function(){},error:function(){}});if(_snd_couponCodeUI!=0){setTimeout(function(){location.href=couponUrl},700);if(couponCode!=""){couponMerchantNameNoSpace=couponMerchantName.replace(/[^a-z]/gi,"");couponWindowName=window.open("","couponCode"+couponMerchantNameNoSpace+"","height=340,width=428,toolbar=no, menubar=no, scrollbars=no, resizable=no,location=no, directories=no, status=no,copyhistory=no");var e='<html lang="en"><head><meta content="IE=Edge,chrome=1" http-equiv="X-UA-Compatible"><meta charset="UTF-8"><scr'+'ipt type="text/javascript" src="http://code.jquery.com/jquery-1.8.1.min.js"></scr'+'ipt><style>body{color: #333333;font-family:Helvetica;margin:0;padding:0;background: #eeeeee;}*{margin:0;padding:0;}.snd_buttonMore{padding-left: 0;padding-right: 0;width: 190px;border-radius: 6px 6px 6px 6px;background-color: #FF6633;background-image: linear-gradient(#FF9933, #FF6633);background-size: 100% auto;border: 0 none;color: white;cursor: pointer;font-family: "Helvetica Neue",Helvetica,Arial,"Lucida Grande",sans-serif;font-size: 1.23077rem;font-weight: bold;letter-spacing: 1.5px;line-height: 1.5em;overflow: visible;padding: 0.32em 0.63em;text-shadow: 0 -1px 1px gray;}.snd_buttonMore:hover{background-image: linear-gradient(#FF7F00, #FF4000);background-size: 100% auto;}.snd_moreBtnSection{margin-top:3px;margin-left:220px;position:relative;}.snd_buttonMore{ cursor:pointer;border-top:1px solid #96d1f8;  background:#326DB1;  background:-webkit-gradient(linear,left top,left bottom,from(#3e779d),to(#326DB1));  background:-webkit-linear-gradient(top,#3e779d,#326DB1);  background:-moz-linear-gradient(top,#3e779d,#326DB1);  background:-ms-linear-gradient(top,#3e779d,#326DB1);  background:-o-linear-gradient(top,#3e779d,#326DB1);  padding:5px 10px;  -webkit-border-radius:5px;  -moz-border-radius:5px;  border-radius:5px;  -webkit-box-shadow:rgba(0,0,0,1) 0 1px 0;  -moz-box-shadow:rgba(0,0,0,1) 0 1px 0;  box-shadow:rgba(0,0,0,1) 0 1px 0;  text-shadow:rgba(0,0,0,.4) 0 1px 0;  color:white;  font-size:13px;  font-weight:bold;  font-family:Helvetica,Arial,Sans-Serif;  text-decoration:none;  vertical-align:middle;  height:15px; width:92px; margin-top:3px;margin-left:270px;position:relative;}#couponWindowHeader{background-image: url("'+_snd_cdn+'images/bg_header.png");background-repeat: repeat-x;border-left: 1px none #1A5189;border-right: 1px none #1A5189;border-top: 1px none #1A5189;display: block;height: 30px;}.inner{padding: 6px 12px;}.primary{margin-top:10px;}#merchantHeading{min-width: auto;width: auto;position: relative;z-index: 1;margin: 0 auto;max-width: 975px;padding-left: 0;padding-right: 0;}#merchantHeading.inner{padding: 5px 10px;}.windowHeader{display: table;width: 100%;padding:5px;}.clearfix:after{clear: both;content: "";display: table;}.windowHeader h1{color: #333333;font-family: helvetica;font-size:28px;line-height: 30px;display: table-cell;vertical-align: middle;margin-right:5px;}.windowHeader img{float: right;text-align: right;margin-right:10px; margin-top: 4px;border: 1px solid #DFDFDF;}hr{color: #999;background-color: #999;height: 1px;}#coupon-code .label{color:#333333;font-size:16px;padding:5px;font-weight:bold;font-family: helvetica;}.labelInfo{color:#6A6A6A;font-size:14px;padding:5px;font-weight:bold;font-family: helvetica;}#coupon-code code{color: #006600;font-size: 21px;font-weight:bold;font-family: helvetica;}#detailSection{margin-top: 20px;padding:5px;font-family: helvetica;}#detailSection a{color: #0033FF;text-decoration: none;font-weight:bold;font-size:14px;}#detailSection .description{font-size:14px;color:#666666;}#expireSection{margin-top:15px;}#expireSection .expireText{padding:5px;font-size: 14px;color:#333333;font-weight:bold;font-family: helvetica;}#expireSection .expireDate{color: #006600;font-size: 14px;font-weight:bold;font-family: helvetica;}.title{margin-bottom:5px;}</style><title>Coupon Code for '+couponMerchantName+'</title></head><body class="snd_popup locale-us redesign noFALinks"><div id="couponWindowHeader">';if((msSecurityFlag==1||msSecurityFlag==2&&mseEntry==1)&&programData!=undefined){e+='<div style="float:right;padding-right:5px;padding-top:6px;color:#FFF;font-size:9px;font-family:Helvetica;">Ads by '+programData+"</div>"}e+='<div style="clear:both"></div></div><div class="module" id="merchantHeading"><div class="inner"><div class="windowHeader clearfix"><h1>'+couponMerchantName+'</h1><img width="120" height="30" src="'+couponImage+'" alt="Coupons"></div><hr><div><div class="primary"><div id="coupon-code"><span class="label">Coupon Code: </span><code title="Use the code at checkout">'+couponCode+'</code></br><span class="labelInfo">[Use the code at checkout to <span style="color:#CE2027;font-weight:bold;">Save</span>]</span></div><div class="details" id="detailSection" style="display: block;"><p class="title"><a rel="nofollow" target="_blank" href="'+couponUrl+'">'+couponTitle+'</a></p><p class="description">'+couponFullDescription+'</p></div><div class="details" id="expireSection" style="display: block;"><span class="expireText">Offer Ends: </span><span class="expireDate">'+couponExpireDisplay+'</span></div></div></div></div></div><div class="snd_moreBtnSection"><button type="button" class="'+moreButtonClass+'" couponText="'+coupon+'" sndGUID="'+sndGUID+'" ipAddress="'+ipAddress+'" browserDisplay="'+f+'" couponMerchantDisplayUrl="'+couponMerchantDisplayUrl+'" couponMerchantID="'+couponMerchantID+'" morePopClose="'+_snd_moreCouponsPopupClose+'" couponMerchantName="'+couponMerchantName+'" image="'+couponImage+'" cVersion="'+cVersion+'" couponUrl="'+couponUrl+'" bVersion="'+bVersion+'" mseEntry="'+mseEntry+'" msSecurityFlag="'+msSecurityFlag+'" programData="'+programData+'">More Coupons</button></div><scr'+'ipt type="text/javascript" src="'+_snd_cdn+'js/sndCodeToMoreCoupons.js"></scr'+"ipt></body></html>";couponWindowName.document.body.innerHTML="";couponWindowName.document.write(e);couponWindowName.focus()}}else{window.open(couponUrl,"_blank")}});s(".snd_buttonMore").click(function(){if(moreBtnText=="More Coupons"){if(s.cookie){s.cookie("sendori_coupon","50",{expires:expirationDate,path:"/",domain:cookieDomain})}else{createCookie("sendori_coupon","50",_snd_couponCookieExpire)}var e=new Date;var t=e.getMonth()+1;var n=e.getDate();var r=e.getFullYear()+"/"+(t<10?"0":"")+t+"/"+(n<10?"0":"")+n;var o=e.getHours()+":"+e.getMinutes()+":"+e.getSeconds();couponClickLogUrl=_snd_logs+"COUPON_CLICK,"+couponID+","+logFinalDate+","+logTime+","+sndGUID+","+ipAddress+","+couponMerchantDisplayUrl+","+couponMerchantID+","+couponCategoryName+","+couponCategoryID+","+f+","+couponUrl+","+cVersion+","+bVersion+","+_snd_appName+",";s.ajax({url:couponClickLogUrl,type:"GET",dataType:"jsonp",cache:false,success:function(){},error:function(){}});moreCouponClickLogUrl=_snd_logs+"COUPON_IMPRESSION,M,"+r+","+o+","+sndGUID+","+ipAddress+","+couponMerchantDisplayUrl+","+couponMerchantID+","+couponCategoryName+","+couponCategoryID+","+f+","+couponUrl+","+cVersion+","+bVersion+","+_snd_appName+",";s.ajax({url:moreCouponClickLogUrl,type:"GET",dataType:"jsonp",cache:false,success:function(){},error:function(){}});couponMerchantNameNoSpace=couponMerchantName.replace(/[^a-z]/gi,"");couponWindowName=window.open("","MoreSavings"+couponMerchantNameNoSpace+"","height=620,width=428,toolbar=no, menubar=no, scrollbars=yes, resizable=no,location=no, directories=no, status=no,copyhistory=no");moreCouponsContent='<html lang="en"><head><meta content="IE=Edge,chrome=1" http-equiv="X-UA-Compatible"><meta charset="UTF-8"><scr'+'ipt type="text/javascript" src="http://code.jquery.com/jquery-1.8.1.min.js"></scr'+'ipt><style>body{color: #333333;font-family:Helvetica;margin:0;padding:0;background: #FCFBF9;}*{margin:0;padding:0;}#couponWindowHeader{background-image: url("'+_snd_cdn+'images/bg_header.png");background-repeat: repeat-x;border-left: 1px none #1A5189;border-right: 1px none #1A5189;border-top: 1px none #1A5189;display: block;height: 30px;}.inner{padding: 6px 12px;}.primary{margin-top:10px;}#merchantHeading{min-width: auto;width: auto;position: relative;z-index: 1;margin: 0 auto;max-width: 975px;padding-left: 0;padding-right: 0;}#merchantHeading.inner{padding: 5px 10px;}.windowHeader{display: table;width: 100%;padding:5px;}.clearfix:after{clear: both;content: "";display: table;}.windowHeader h1{color: #333333;font-family: helvetica;font-size:28px;line-height: 30px;display: table-cell;vertical-align: middle;margin-right:5px;}.windowHeader img{float: right;text-align: right;margin-right:10px; margin-top: 4px;border: 1px solid #DFDFDF;}hr{color: #999;background-color: #999;height: 1px;}#coupon-code .label{color:#333333;font-size:16px;padding:5px;font-weight:bold;font-family: helvetica;}.labelInfo{color:#6A6A6A;font-size:14px;padding:5px;font-weight:bold;font-family: helvetica;}#coupon-code code{color: #006600;font-size: 21px;font-weight:bold;font-family: helvetica;}#detailSection{margin-top: 20px;padding:5px;font-family: helvetica;}#detailSection a{color: #0033FF;text-decoration: none;font-weight:bold;font-size:14.5px;}#detailSection .description{font-size:12px;color:#333333;}#expireSection{margin-top:15px;}#expireSection .expireText{padding:5px;font-size: 14px;color:#333333;font-weight:bold;font-family: helvetica;}#expireSection .expireDate{color: #006600;font-size: 14px;font-weight:bold;font-family: helvetica;}.title{margin-bottom:5px;}.title{margin-bottom:5px;}.floatRight{float:right;}.snd_couponCode{background:linear-gradient(centerbottom,white,#EEEEEE0px,white15px) repeat scroll 0 0 transparent;border:1px solid #CCC;color:#006600;font-size:15px;font-weight:bold;width:120px!important;padding:2px 4px}.popup-module-deal {border-bottom: 1px dashed #999999;padding: 0.30769rem 0;}#detailSection a:hover{color:#003366;}.btn_getDeal{cursor:pointer;background-image:url('+_snd_cdn+"images/get_deal.png);background-repeat:no-repeat;height:30px;margin-right:2px;width:112px;margin-top:1px;}.btn_getCode{cursor:pointer;background-image:url("+_snd_cdn+"images/get_code.png);background-repeat:no-repeat;height:30px;margin-right:2px;width:112px;margin-top:1px;}</style><title>More Coupons for "+couponMerchantName+'</title></head><body class="snd_popup locale-us redesign"><div id="couponWindowHeader">';if((msSecurityFlag==1||msSecurityFlag==2&&mseEntry==1)&&programData!=undefined){moreCouponsContent+='<div style="float:right;padding-right:5px;padding-top:6px;color:#FFF;font-size:9px;font-family:Helvetica;">Ads by '+programData+"</div>"}moreCouponsContent+='<div style="clear:both"></div></div><div class="module" id="merchantHeading"><div class="inner"><div class="windowHeader clearfix"><h1>'+couponMerchantName+'</h1><img width="120" height="30" src="'+couponImage+'" alt="Coupons"></div><hr><div><div class="primary noFALinks">';for(i=0;i<couponMultiCount;i++){couponRespArrayMore=couponMultipleArray[i].split(";");couponIDMore=couponRespArrayMore[0];couponTitleMore=couponRespArrayMore[1].substr(0,80);couponDescriptionMore=couponRespArrayMore[3].substr(0,200);couponFullDescriptionMore=couponRespArrayMore[3];couponCodeMore=couponRespArrayMore[4];couponImageMore=couponRespArrayMore[14]+"?height=30&width=120";couponExpireDateMore=couponRespArrayMore[13];couponNoSubidUrlMore=couponRespArrayMore[10];couponUrlMore=couponNoSubidUrlMore+"&subid="+sndGUID;couponMerchantIDMore=couponRespArrayMore[5];couponMerchantNameMore=couponRespArrayMore[6];couponCategoryIDMore=couponRespArrayMore[16];couponCategoryNameMore=couponRespArrayMore[17];couponMerchantUrlMore=couponRespArrayMore[8];couponMerchantDisplayUrlMore=couponRespArrayMore[7];moreCouponsContent+='<div class="details popup-module-deal" id="detailSection" style="display: block;"><p class="title"><a rel="nofollow" id="'+couponIDMore+'-title">'+couponTitleMore+"</a>";if(couponCodeMore!=""){if(i==0){moreCouponsContent+='<span class="floatRight"><input class="snd_couponCode" type="text" title="Use the Code at Checkout" value="'+couponCodeMore+'"/></span></p><p id="'+couponIDMore+'-description" class="description">'+couponDescriptionMore+"</p></div>"}else{moreCouponsContent+='<span class="floatRight btn_getCode" merchantName="'+couponMerchantNameMore+'" couponCode="'+couponCodeMore+'" expire="'+couponExpireDateMore+'" image="'+couponImageMore+'" couponUrl="'+couponUrlMore+'" couponId="'+couponIDMore+'" sndGUID="'+sndGUID+'" ipAddress="'+ipAddress+'" browserDisplay="'+f+'" couponMerchantDisplayUrl="'+couponMerchantDisplayUrl+'" couponMerchantID="'+couponMerchantID+'" morePopClose="'+_snd_moreCouponsPopupClose+'" cVersion="'+cVersion+'" bVersion="'+bVersion+'" mseEntry="'+mseEntry+'" msSecurityFlag="'+msSecurityFlag+'" programData="'+programData+'"></span></p><p id="'+couponIDMore+'-description" class="description">'+couponDescriptionMore+"</p></div>"}}else{moreCouponsContent+='<span class="floatRight btn_getDeal" merchantName="'+couponMerchantNameMore+'" couponCode="'+couponCodeMore+'" expire="'+couponExpireDateMore+'" image="'+couponImageMore+'" couponUrl="'+couponUrlMore+'" couponId="'+couponIDMore+'" sndGUID="'+sndGUID+'" ipAddress="'+ipAddress+'" browserDisplay="'+f+'" couponMerchantDisplayUrl="'+couponMerchantDisplayUrl+'" couponMerchantID="'+couponMerchantID+'" morePopClose="'+_snd_moreCouponsPopupClose+'" cVersion="'+cVersion+'" bVersion="'+bVersion+'" mseEntry="'+mseEntry+'" msSecurityFlag="'+msSecurityFlag+'" programData="'+programData+'"></span></p><p class="description">'+couponDescriptionMore+"</p></div>"}}moreCouponsContent+="</div></div></div></div><scr"+'ipt type="text/javascript" src="'+_snd_cdn+'js/sndCouponHandle.js"></scr'+"ipt></body></html>";couponWindowName.document.body.innerHTML="";couponWindowName.document.write(moreCouponsContent);couponWindowName.focus();setTimeout(function(){location.href=couponUrl},500)}else{s.cookie("sendori_coupon","50",{expires:expirationDate,path:"/",domain:cookieDomain});couponClickLogUrl=_snd_logs+"COUPON_CLICK,"+couponID+","+logFinalDate+","+logTime+","+sndGUID+","+ipAddress+","+couponMerchantDisplayUrl+","+couponMerchantID+","+couponCategoryName+","+couponCategoryID+","+f+","+couponUrl+","+cVersion+","+bVersion+",";s.ajax({url:couponClickLogUrl,type:"GET",dataType:"jsonp",cache:false,success:function(){},error:function(){}});if(_snd_couponCodeUI!=0){setTimeout(function(){location.href=couponUrl},800)}}})}if(typeof partner_config!=="undefined"){for(var l=0;l<partner_config.products.length;l++){var c=partner_config.products[l].id;if(sndpID==c){n=true;e=partner_config.products[l].slider_referrer;t=partner_config.products[l].slider_Nx;r=partner_config.products[l].Ntfcn;if((r==undefined||r=="")&&(t==undefined||t=="")&&(e==undefined||e=="")){return}else break}}}if(!n){return}o()})}function sendoriSearch(){function s(e,t){var n=i(".sndSearchLeft");var r=i(".sndNeedleLeft");n.css("margin-left","-"+(e+5)+"px");r.css({"background-color":t,"border-top":"3px solid "+t,"border-bottom":"3px solid "+t});i("#iconS_close").live("click",function(t){i("#imgNeedleLeft").attr("src",_snd_cdn+"images/left_nav.png");n.unbind("hover");n.stop().animate({"margin-left":"-"+(e+5+25)+"px"},1e3,function(){n.hide()})});n.hover(function(){i("#imgNeedleLeft").attr("src",_snd_cdn+"images/right_nav.png");n.stop().animate({"margin-left":"0px"},1e3);u()},function(){i("#imgNeedleLeft").attr("src",_snd_cdn+"images/left_nav.png");n.stop().animate({"margin-left":"-"+(e+5)+"px"},1e3)});if(_snd_searchTimeout>0){setTimeout(function(){n.trigger("mouseenter")},_snd_searchTimeout*1e3)}}function o(e,t){var n=i(".sndSearchRight");var r=i(".sndNeedleRight");n.css("right","-"+(e+5)+"px");r.css({"background-color":t,"border-top":"3px solid "+t,"border-bottom":"3px solid "+t});i("#iconS_close1").live("click",function(t){i("#imgNeedleRight").attr("src",_snd_cdn+"images/right_nav.png");n.unbind("hover");n.stop().animate({right:"-"+(e+5+25)+"px"},1e3,function(){n.hide()})});n.hover(function(){i("#imgNeedleRight").attr("src",_snd_cdn+"images/left_nav.png");n.stop().animate({right:"0px"},1e3);u()},function(){i("#imgNeedleRight").attr("src",_snd_cdn+"images/right_nav.png");n.stop().animate({right:"-"+(e+5)+"px"},1e3)});if(_snd_searchTimeout>0){setTimeout(function(){n.trigger("mouseenter")},_snd_searchTimeout*1e3)}}function u(){logDate=new Date;logmonth=logDate.getMonth()+1;logday=logDate.getDate();logFinalDate=logDate.getFullYear()+"/"+(logmonth<10?"0":"")+logmonth+"/"+(logday<10?"0":"")+logday;logTime=logDate.getHours()+":"+logDate.getMinutes()+":"+logDate.getSeconds();var e=_snd_logs+"SEARCHBOX_IMPRESSION,"+logFinalDate+","+logTime+","+sndGUID+","+ipAddress+","+document.domain+","+cVersion+","+bVersion+","+_snd_uA+","+_snd_appName+",";i.ajax({url:e,type:"GET",dataType:"jsonp",cache:false,success:function(){},error:function(){}})}var e=new Object;var t=[];var n=0;var r=6;var i=$jOld.noConflict();i(document).ready(function(){function c(e){if(e=="SCRIPT"||e=="TITLE"||e=="A"||e=="H1"||e=="STYLE"||e=="INPUT"||e=="IMG"||e=="FORM"||e=="BUTTON"||e=="LINK"||e=="IFRAME"||e=="SELECT"||e=="ALT"||e=="LABEL"||e=="META"||e=="NOSCRIPT"||e=="OBJECT"||e=="PARAM"||e=="CITE"||e=="/BODY"||e=="BR"||e=="HEAD"||e=="NAV"){return true}else{return false}}function h(s,o,u){var a=document.URL;var f=1;var l="";if(negativeKeywordfound==true){return}var c="";var h="</a>";var p=s.split(" ");for(index=0;index<p.length&&n<r;index++){var d="";var v=p[index].toLowerCase();v=v.replace(/[.,;&]$/,"");if(v==""||v==" "||!v.match(/^[a-z]+$/)||v.indexOf("<")>-1||v.indexOf(">")>-1||v.indexOf("?")>-1||v.indexOf("&")>-1||exclusion_list[v]!=undefined&&exclusion_list[v]!=""){continue}if(e[v]!=null){d=p[index].replace(/[.,;&]$/,"");if(blacklist_keyword_map[v]!=undefined&&blacklist_keyword_map[v]!=""){negativeKeywordfound=true;break}}if(p[index]==p[index].replace(/[.,;&]$/,"")){var m="";if(p.length>index+1){var g=p[index+1].toLowerCase();if(g==""||g==" "||!g.match(/^[a-z]+$/)||g.indexOf("<")>-1||g.indexOf(">")>-1||g.indexOf("?")>-1||g.indexOf("&")>-1||exclusion_list[g]!=undefined&&exclusion_list[g]!=""){}else{g=g.replace(/[.,;]$/,"");m=v+" "+g;if(e[m]!=null){d=p[index]+" "+p[index+1].replace(/[.,;&]$/,"")}if(blacklist_keyword_map[m]!=undefined&&blacklist_keyword_map[m]!=""){negativeKeywordfound=true;break}}}}if(d!=""){wordlower=d.toLowerCase();l=wordlower;var y=e[wordlower];var b=y.description;if(b==""){var w=category_list[y.category.toLowerCase()];if(w!=undefined&&w!=""){b=w.desc}else{b=y.category+" deal"}}console.log("searchBox Desc::"+b);l=b.toLowerCase();if(i.inArray(l,t)==-1){t.push(l);f=1}else{f=0}if(f==1){var E="";if(y["url"]=="shop.com"){E="shop"}else{E="job";l="Hot "+d+" jobs";d+=" jobs"}var S='<div class="sndSearchLink" href="http://search.findwide.com/srd2/index.php?id=328243JmZpbHRlcl9sZXZlbD0w&k='+d+'"><div class="keyword">'+l+"</div></div>";i("#sndSearchBoxContent").append(S);n++;return}}}return}function p(e){if(negativeKeywordfound==true){return}var t=e.nodeValue;var n=e.parentNode;h(t,n,e)}function d(e){if(c(e.nodeName.toUpperCase())||t.length>=r){return}if(e.nodeName=="#text"&&i.trim(e.nodeValue).length>0){p(e)}if(e.hasChildNodes()){for(var n=0;n<e.childNodes.length;n++){if(t.length>=r){break}var s=true;try{s=i(e.childNodes[n]).is(":visible")}catch(e){}if(s==true){d(e.childNodes[n])}}}}if(_snd_searchConfig=="both"){var u='<div class="sndSearchBox noFALinks sndSearchRight"><div class="snd_search_header"><div class="snd_search_text">Ads by '+programData+'</div><div class="snd_Sicons"><a><img src="'+_snd_cdn+'images/icon_close.png" id="iconS_close1"></a>&nbsp;<a target="_blank" href="'+_snd_support+'"><img border="0" src="'+_snd_cdn+'images/icon_help.png"></a></div><div class="sndClr"></div></div>';u+='<div id="sndSearchBoxContent"></div><div class="sndNeedle sndNeedleRight"><div class="sndArrow"><img id="imgNeedleRight" src="'+_snd_cdn+'images/right_nav.png"/></div></div></div>';i(document.body).append(u);var u='<div class="sndSearchBox noFALinks sndSearchLeft"><div class="snd_search_header"><div class="snd_search_text">Ads by '+programData+'</div><div class="snd_Sicons"><a target="_blank" href="'+_snd_support+'"><img border="0" src="'+_snd_cdn+'images/icon_help.png"></a>&nbsp;<a><img src="'+_snd_cdn+'images/icon_close.png" id="iconS_close"></a></div><div class="sndClr"></div></div>';u+='<div id="sndSearchBoxContent1"></div><div class="sndNeedle sndNeedleLeft"><div class="sndArrow"><img id="imgNeedleLeft" src="'+_snd_cdn+'images/left_nav.png"/></div></div></div>';i(document.body).append(u)}else if(_snd_searchConfig=="right"){var u='<div class="sndSearchBox noFALinks sndSearchRight"><div class="snd_search_header"><div class="snd_search_text">Ads by '+programData+'</div><div class="snd_Sicons"><a><img src="'+_snd_cdn+'images/icon_close.png" id="iconS_close1"></a>&nbsp;<a target="_blank" href="'+_snd_support+'"><img border="0" src="'+_snd_cdn+'images/icon_help.png"></a></div><div class="sndClr"></div></div>';u+='<div id="sndSearchBoxContent"></div><div class="sndNeedle sndNeedleRight"><div class="sndArrow"><img id="imgNeedleRight" src="'+_snd_cdn+'images/right_nav.png"/></div></div></div>';i(document.body).append(u)}else{var u='<div class="sndSearchBox noFALinks sndSearchLeft"><div class="snd_search_header"><div class="snd_search_text">Ads by '+programData+'</div><div class="snd_Sicons"><a target="_blank" href="'+_snd_support+'"><img border="0" src="'+_snd_cdn+'images/icon_help.png"></a>&nbsp;<a><img src="'+_snd_cdn+'images/icon_close.png" id="iconS_close"></a></div><div class="sndClr"></div></div>';u+='<div id="sndSearchBoxContent"></div><div class="sndNeedle sndNeedleLeft"><div class="sndArrow"><img id="imgNeedleLeft" src="'+_snd_cdn+'images/left_nav.png"/></div></div></div>';i(document.body).append(u)}for(var a in inline_keyword_obj){var f=inline_keyword_obj[a];e[a]=f;if(e[a].url!="job.com"){var l=a.substring(a.length-1);switch(l){case"y":e[a.substring(0,a.length-1)+"ies"]=f;break;case"h":e[a+"es"]=f;break;case"s":e[a+"es"]=f;break;default:e[a+"s"]=f}}}$l=i(".sndSearchLink");$l.live("click",function(e){var t=i(this).attr("href");var n=t.split("&k=")[1];logDate=new Date;logmonth=logDate.getMonth()+1;logday=logDate.getDate();logFinalDate=logDate.getFullYear()+"/"+(logmonth<10?"0":"")+logmonth+"/"+(logday<10?"0":"")+logday;logTime=logDate.getHours()+":"+logDate.getMinutes()+":"+logDate.getSeconds();var r=_snd_logs+"SEARCHBOX_CLICK,"+logFinalDate+","+logTime+","+sndGUID+","+ipAddress+","+document.domain+","+cVersion+","+bVersion+","+n+","+encodeURIComponent(t)+","+_snd_uA+","+_snd_appName+",";i.ajax({url:r,type:"GET",dataType:"jsonp",cache:false,success:function(){},error:function(){}});sndSubmitForm(t)});if(typeof console==="undefined"||typeof console.log==="undefined"){console={};console.log=function(){}}var v=document.getElementsByTagName("body");for(var m=0;m<v.length;m++){var g=v[m];d(g)}if(t.length>0){var y=i(".sndSearchBox");if(_snd_searchConfig=="both"){i("#sndSearchBoxContent1").html(i("#sndSearchBoxContent").html())}var b=y.width();var w=y.height();if(b<=150){b=150;y.css("width","150px")}if(b>400){b=400;y.css("width","400px")}y.css("margin-top","-"+w/2+"px");i(".sndArrow").css("padding-top",w/2-12+"px");var E=["#5e8cc9","orange","green"];var S=["blue","orange","green"];var x=Math.floor(Math.random()*E.length);var T=E[x];y.css("border","3px solid "+T);y.addClass(S[x]);if(_snd_searchConfig=="both"){s(b,T);o(b,T)}else if(_snd_searchConfig=="right"){o(b,T)}else{s(b,T)}}else{i(".sndSearchBox").hide()}})}function isIE(){var e=navigator.userAgent.toLowerCase();return e.indexOf("msie")!=-1?parseInt(e.split("msie")[1]):false}function setSessionCookie(e,t){var n=escape(t);document.cookie=e+"="+n+"; path=/"}function createCookie(e,t,n){if(n){var r=new Date;r.setTime(r.getTime()+n*60*60*1e3);var i="; expires="+r.toGMTString()}else var i="";document.cookie=e+"="+t+i+"; path=/"}function readCookie(e){var t=e+"=";var n=document.cookie.split(";");for(var r=0;r<n.length;r++){var i=n[r];while(i.charAt(0)==" ")i=i.substring(1,i.length);if(i.indexOf(t)==0)return i.substring(t.length,i.length)}return""}function eraseCookie(e){createCookie(e,"",-1)}function inlinePopupClick(e){$link=$jOld("#link_"+e);var t=$link.attr("href");var n=$link.attr("deal-store");var r=$link.attr("deal-id");var i=$link.attr("deal-cpc");var s=$link.attr("api");var o=$link.clone().children().remove().end().text();logDate=new Date;logmonth=logDate.getMonth()+1;logday=logDate.getDate();logFinalDate=logDate.getFullYear()+"/"+(logmonth<10?"0":"")+logmonth+"/"+(logday<10?"0":"")+logday;logTime=logDate.getHours()+":"+logDate.getMinutes()+":"+logDate.getSeconds();var u=_snd_logs+"INLINE_POPUP_CLICK,"+logFinalDate+","+logTime+","+sndGUID+","+ipAddress+","+document.domain+","+cVersion+","+bVersion+","+o+","+r+","+i+","+n+","+t+","+_snd_uA+","+s+","+_snd_appName+",";$jOld.ajax({url:u,type:"GET",dataType:"jsonp",cache:false,success:function(){},error:function(){}});checkSndInline(o,$link)}function checkSndInline(e,t){e=e.toLowerCase();var n=readCookie("sndInlineClick");if(n!=undefined&&n!=""){n=decodeURIComponent(n);n=JSON.parse(n)}else{n={}}if(n[e]!=undefined){var r=n[e]+1;n[e]=r}else{n[e]=1}if(n[e]>=_snd_inlineCap){t.replaceWith(e);$jOld("#snd_popupDiv").hide()}setSessionCookie("sndInlineClick",JSON.stringify(n))}function crossDomainAjax(e,t,n,r){if("XDomainRequest"in window&&window.XDomainRequest!==null){var i=new XDomainRequest;i.timeout=5e3;i.onload=function(){var e=new ActiveXObject("Microsoft.XMLDOM"),t=$jOld.parseJSON(i.responseText);e.async=false;if(t==null||typeof t=="undefined"){t=$jOld.parseJSON(data.firstChild.textContent)}n(t)};i.ontimeout=function(){r("Timeout");return};i.onprogress=function(){return};i.onerror=function(){r("Error");return};i.open("get",t);setTimeout(function(){i.send()},5)}else if(navigator.userAgent.indexOf("MSIE")!=-1&&parseInt(navigator.userAgent.match(/MSIE ([\d.]+)/)[1],10)<8){return false}else{$jOld.ajax({url:t,dataType:e,type:"GET",async:false,success:function(e,t){n(e,t)},error:function(e,t,n){r(t)}})}}function openHelp(e){if(_snd_appName.toLowerCase()=="sendori"){var t=_snd_optout+"?t=tl&param="+sndGUID}else if(_snd_appName.toLowerCase()=="pureleads"){var t=_snd_optout+"?t=tl&param="+sndGUID}sndSubmitForm(t);if(e.stopPropagation)e.stopPropagation();if(e.cancelBubble!=null)e.cancelBubble=true}function closePopup(e){$jOld("#snd_popupDiv").hide();if(e.stopPropagation)e.stopPropagation();if(e.cancelBubble!=null)e.cancelBubble=true}function indeed_clk(e,t){var n=e;var r=n.indexOf("&jsa=");if(r>0){sndSubmitForm(e)}else{var i=n+"&jsa="+t;if(i.indexOf("&inchal")==-1)i+="&inchal=apiresults";sndSubmitForm(i)}}function sndSubmitForm(e){var t=document.createElement("form");t.method="GET";t.action=e.split("?")[0];var n=e.split("?")[1];n=n.split("&");for(var r=0;r<n.length;r++){var i=n[r].split("=")[0];var s=n[r].split("=")[1];var o=document.createElement("input");o.type="hidden";o.name=i;o.value=s;t.appendChild(o)}t.target="_blank";$jOld("body").append(t);t.submit();$jOld(t).remove()}if(sndpID==undefined||sndpID==""){var tvInlineTxt=1;var tvTransitional=1;var tvBanner=1;var tvPopupAd=1;var savingsDisplay=1;var sndInlineTxt=1;var SuperFishDisplay=1;var indeed=0;var _snd_searchBox=1;var _snd_searchConfig="right";var _snd_searchTimeout=0}else{for(i=0;i<partner_config.products.length;i++){if(partner_config.products[i].id==sndpID){var tvInlineTxt=partner_config.products[i].tvI;var tvTransitional=partner_config.products[i].tvT;var tvBanner=partner_config.products[i].tvB;var tvPopupAd=partner_config.products[i].tvP;var savingsDisplay=partner_config.products[i].savings;var sndInlineTxt=partner_config.products[i].sndI;var SuperFishDisplay=partner_config.products[i].superfish;var indeed=partner_config.products[i].indeed;if(indeed==undefined){indeed=0}var searchbox=partner_config.products[i].searchbox;if(searchbox!=undefined){var _snd_searchBox=1;var _snd_searchConfig=partner_config.products[i].searchbox.dir;var _snd_searchTimeout=partner_config.products[i].searchbox.timeout}else{var _snd_searchBox=0}break}}}if(tvInlineTxt==1&&tvTransitional==1&&tvBanner==0){var tvCid=1}else if(tvInlineTxt==1&&tvTransitional==0&&tvBanner==0){var tvCid=2}else if(tvInlineTxt==1&&tvTransitional==1&&tvBanner==1){var tvCid=5}else if(tvInlineTxt==0&&tvTransitional==1&&tvBanner==0){var tvCid=6}else if(tvInlineTxt==0&&tvTransitional==0&&tvBanner==1){var tvCid=7}else if(tvInlineTxt==1&&tvTransitional==0&&tvBanner==1){var tvCid=8}else if(tvInlineTxt==0&&tvTransitional==1&&tvBanner==1){var tvCid=9}else if(tvInlineTxt==0&&tvTransitional==0&&tvBanner==0){var tvCid=0}if(sndgID!=undefined){var sndGUID=sndgID.substring(1,37)}else{var sndGUID="NA"}var cookieDomain=document.domain;var $jOld=jQuery.noConflict(true);var blacklist_keyword_map=new Object;var negativeKeywordfound=false;var logDate=new Date;var logmonth=logDate.getMonth()+1;var logday=logDate.getDate();var logFinalDate=logDate.getFullYear()+"/"+(logmonth<10?"0":"")+logmonth+"/"+(logday<10?"0":"")+logday;var logTime=logDate.getHours()+":"+logDate.getMinutes()+":"+logDate.getSeconds();var expirationDate=new Date;expirationDate.setTime(expirationDate.getTime()+_snd_couponCookieExpire*60*60*1e3);if($jOld.cookie){if($jOld.cookie("sendori_coupon")==undefined){if(parseInt(couponCap)>0){$jOld.cookie("sendori_coupon",1,{expires:expirationDate,path:"/",domain:cookieDomain});var couponDisplay=1}else{var couponDisplay=1}}else{couponCount=parseInt($jOld.cookie("sendori_coupon"));if(couponCount<parseInt(couponCap)){newCount=couponCount;++newCount;$jOld.removeCookie("sendori_coupon");$jOld.cookie("sendori_coupon",newCount,{expires:expirationDate,path:"/",domain:cookieDomain});var couponDisplay=1}else{var couponDisplay=0;if(isCheckout==undefined){var couponDisplay=0}if(isCheckout==1&&couponCount!=50){var checkoutCookieVal=$jOld.cookie("sendori_checkout_coupon");if(checkoutCookieVal==undefined){$jOld.cookie("sendori_checkout_coupon",1,{expires:expirationDate,path:"/",domain:cookieDomain});var couponDisplay=1}else if(checkoutCookieVal<couponCheckoutCap){checkoutCookieVal++;$jOld.cookie("sendori_checkout_coupon",checkoutCookieVal,{expires:expirationDate,path:"/",domain:cookieDomain});var couponDisplay=1}else{$jOld.cookie("sendori_checkout_coupon",50,{expires:expirationDate,path:"/",domain:cookieDomain});var couponDisplay=0}}}}}else{if(readCookie("sendori_coupon")==undefined||readCookie("sendori_coupon")==""){if(parseInt(couponCap)>0){createCookie("sendori_coupon",1,_snd_couponCookieExpire);var couponDisplay=1}else{var couponDisplay=1}}else{couponCount=parseInt(readCookie("sendori_coupon"));if(couponCount<parseInt(couponCap)){newCount=couponCount;++newCount;eraseCookie("sendori_coupon");createCookie("sendori_coupon",newCount,_snd_couponCookieExpire);var couponDisplay=1}else{var couponDisplay=0;if(isCheckout==undefined){var couponDisplay=0}if(isCheckout==1&&couponCount!=50){var checkoutCookieVal=readCookie("sendori_checkout_coupon");if(checkoutCookieVal==undefined||checkoutCookieVal==""){createCookie("sendori_checkout_coupon",1,_snd_couponCookieExpire);var couponDisplay=1}else if(checkoutCookieVal<couponCheckoutCap){checkoutCookieVal++;createCookie("sendori_checkout_coupon",checkoutCookieVal,_snd_couponCookieExpire);var couponDisplay=1}else{createCookie("sendori_checkout_coupon",50,_snd_couponCookieExpire);var couponDisplay=0}}}}}if(savingsDisplay==0){var couponDisplay=0}var _snd_isInIFrame=window.location!=window.parent.location?true:false;if(!_snd_isInIFrame){for(var index=0;index<blacklist_keywords.blacklist.length;index++){var key=blacklist_keywords.blacklist[index].keyword;blacklist_keyword_map[key]="block"}var _snd_title=document.title;if(_snd_title!=""){_snd_title=_snd_title.split(" ");for(b=0;b<_snd_title.length;b++){var _snd_t=_snd_title[b];_snd_t=_snd_t.replace(/[.,;&]$/,"").toLowerCase();if(_snd_site_black[_snd_t]!=undefined&&_snd_site_black[_snd_t]!=""){negativeKeywordfound=true;break}}}if(!negativeKeywordfound){var meta_keywords="";var meta_desc="";var metas=document.getElementsByTagName("meta");for(var x=0,y=metas.length;x<y;x++){if(metas[x].name.toLowerCase()=="keywords"){meta_keywords=metas[x].content}if(metas[x].name.toLowerCase()=="description"){meta_desc=metas[x].content}}if(meta_keywords!=""){_snd_title=meta_keywords.split(" ");for(b=0;b<_snd_title.length;b++){var _snd_t=_snd_title[b];_snd_t=_snd_t.replace(/[.,;&]$/,"").toLowerCase();if(_snd_site_black[_snd_t]!=undefined&&_snd_site_black[_snd_t]!=""){negativeKeywordfound=true;break}}}if(!negativeKeywordfound&&meta_desc!=""){_snd_title=meta_desc.split(" ");for(b=0;b<_snd_title.length;b++){var _snd_t=_snd_title[b];_snd_t=_snd_t.replace(/[.,;&]$/,"").toLowerCase();if(_snd_site_black[_snd_t]!=undefined&&_snd_site_black[_snd_t]!=""){negativeKeywordfound=true;break}}}}if(!negativeKeywordfound){tvServiceCall();sendoriSlider();if(_snd_searchBox==1){if(couponDisplay==1){if(coupon!=undefined&&couponDisplay!=0&&coupon!=""){}else{if(CorrectedDomain==undefined&&OriginalDomain==undefined){sendoriSearch()}}}else{if(CorrectedDomain==undefined&&OriginalDomain==undefined){sendoriSearch()}}}if(SuperFishDisplay==1){if(window.location.protocol!="https:"){var superfish=document.createElement("script");superfish.src="http://www.superfish.com/ws/sf_main.jsp?dlsource=jqlazxy&CTID=efg&partnername="+programData;superfish.type="text/javascript";document.getElementsByTagName("body")[0].appendChild(superfish)}else{var superfish=document.createElement("script");superfish.src="https://www.superfish.com/ws/sf_main.jsp?dlsource=jqlazxy&CTID=efg&partnername="+programData;superfish.type="text/javascript";document.getElementsByTagName("body")[0].appendChild(superfish)}}}}$jOld(function(){$jOld("a.FAtxtL").live("mouseover",function(){logDateTV=new Date;logmonthTV=logDateTV.getMonth()+1;logdayTV=logDateTV.getDate();logFinalDateTV=logDateTV.getFullYear()+"/"+(logmonthTV<10?"0":"")+logmonthTV+"/"+(logdayTV<10?"0":"")+logdayTV;logTimeTV=logDateTV.getHours()+":"+logDateTV.getMinutes()+":"+logDateTV.getSeconds();tvInlineImpressionLogUrl=_snd_logs+"TV_INLINE_IMPRESSION,"+logFinalDateTV+","+logTimeTV+","+sndGUID+","+ipAddress+","+document.domain+","+cVersion+","+bVersion+","+_snd_uA+","+_snd_appName+",";$jOld.ajax({url:tvInlineImpressionLogUrl,type:"GET",dataType:"jsonp",cache:false,success:function(){},error:function(){}})});$jOld("a.FAtxtL").live("click",function(){logDateTVC=new Date;logmonthTVC=logDateTVC.getMonth()+1;logdayTVC=logDateTVC.getDate();logFinalDateTVC=logDateTVC.getFullYear()+"/"+(logmonthTVC<10?"0":"")+logmonthTVC+"/"+(logdayTVC<10?"0":"")+logdayTVC;logTimeTVC=logDateTVC.getHours()+":"+logDateTVC.getMinutes()+":"+logDateTVC.getSeconds();tvInlineClickLogUrl=_snd_logs+"TV_INLINE_CLICK,"+logFinalDateTVC+","+logTimeTVC+","+sndGUID+","+ipAddress+","+document.domain+","+cVersion+","+bVersion+","+_snd_uA+","+_snd_appName+",";$jOld.ajax({url:tvInlineClickLogUrl,type:"GET",dataType:"jsonp",cache:false,success:function(){},error:function(){}})});$jOld("#sf_see_similar").live("mouseover",function(){logDateTV=new Date;logmonthTV=logDateTV.getMonth()+1;logdayTV=logDateTV.getDate();logFinalDateTV=logDateTV.getFullYear()+"/"+(logmonthTV<10?"0":"")+logmonthTV+"/"+(logdayTV<10?"0":"")+logdayTV;logTimeTV=logDateTV.getHours()+":"+logDateTV.getMinutes()+":"+logDateTV.getSeconds();tvInlineImpressionLogUrl=_snd_logs+"SUPERFISH_IMPRESSION,"+logFinalDateTV+","+logTimeTV+","+sndGUID+","+ipAddress+","+document.domain+","+cVersion+","+bVersion+","+_snd_uA+","+_snd_appName+",";$jOld.ajax({url:tvInlineImpressionLogUrl,type:"GET",dataType:"jsonp",cache:false,success:function(){},error:function(){}})});$jOld("#similarproducts_inimg .thumb_link,#similarproducts_inimg .item_info").live("mouseenter",function(){logDateTV=new Date;logmonthTV=logDateTV.getMonth()+1;logdayTV=logDateTV.getDate();logFinalDateTV=logDateTV.getFullYear()+"/"+(logmonthTV<10?"0":"")+logmonthTV+"/"+(logdayTV<10?"0":"")+logdayTV;logTimeTV=logDateTV.getHours()+":"+logDateTV.getMinutes()+":"+logDateTV.getSeconds();tvInlineImpressionLogUrl=_snd_logs+"SUPERFISH_CL_IMPRESSION,"+logFinalDateTV+","+logTimeTV+","+sndGUID+","+ipAddress+","+document.domain+","+cVersion+","+bVersion+","+_snd_uA+","+_snd_appName+",";$jOld.ajax({url:tvInlineImpressionLogUrl,type:"GET",dataType:"jsonp",cache:false,success:function(){},error:function(){}})});$jOld("#tResultContent .itemInner").live("click",function(){logDateTV=new Date;logmonthTV=logDateTV.getMonth()+1;logdayTV=logDateTV.getDate();logFinalDateTV=logDateTV.getFullYear()+"/"+(logmonthTV<10?"0":"")+logmonthTV+"/"+(logdayTV<10?"0":"")+logdayTV;logTimeTV=logDateTV.getHours()+":"+logDateTV.getMinutes()+":"+logDateTV.getSeconds();var e=document.referrer;e=e.substr(e.indexOf("//")+2);e=e.substr(0,e.indexOf("/"));tvInlineImpressionLogUrl=_snd_logs+"SUPERFISH_CLICK,"+logFinalDateTV+","+logTimeTV+","+sndGUID+","+ipAddress+","+e+","+cVersion+","+bVersion+","+_snd_uA+","+_snd_appName+",";$jOld.ajax({url:tvInlineImpressionLogUrl,type:"GET",dataType:"jsonp",cache:false,success:function(){},error:function(){}})});$jOld("#similarproducts_inimg .thumb_link,#similarproducts_inimg .item_info").live("click",function(){logDateTV=new Date;logmonthTV=logDateTV.getMonth()+1;logdayTV=logDateTV.getDate();logFinalDateTV=logDateTV.getFullYear()+"/"+(logmonthTV<10?"0":"")+logmonthTV+"/"+(logdayTV<10?"0":"")+logdayTV;logTimeTV=logDateTV.getHours()+":"+logDateTV.getMinutes()+":"+logDateTV.getSeconds();tvInlineImpressionLogUrl=_snd_logs+"SUPERFISH_CL_CLICK,"+logFinalDateTV+","+logTimeTV+","+sndGUID+","+ipAddress+","+document.domain+","+cVersion+","+bVersion+","+_snd_uA+","+_snd_appName+",";$jOld.ajax({url:tvInlineImpressionLogUrl,type:"GET",dataType:"jsonp",cache:false,success:function(){},error:function(){}})})});(function(e,t,n){function i(e){return e}function s(e){return o(decodeURIComponent(e.replace(r," ")))}function o(e){if(e.indexOf('"')===0){e=e.slice(1,-1).replace(/\\"/g,'"').replace(/\\\\/g,"\\")}return e}function u(e){return a.json?JSON.parse(e):e}var r=/\+/g;var a=$jOld.cookie=function(e,r,o){if(r!==n){o=$jOld.extend({},a.defaults,o);if(r===null){o.expires=-1}if(typeof o.expires==="number"){var f=o.expires,l=o.expires=new Date;l.setDate(l.getDate()+f)}r=a.json?JSON.stringify(r):String(r);return t.cookie=[encodeURIComponent(e),"=",a.raw?r:encodeURIComponent(r),o.expires?"; expires="+o.expires.toUTCString():"",o.path?"; path="+o.path:"",o.domain?"; domain="+o.domain:"",o.secure?"; secure":""].join("")}var c=a.raw?i:s;var h=t.cookie.split("; ");var p=e?null:{};for(var d=0,v=h.length;d<v;d++){var m=h[d].split("=");var g=c(m.shift());var y=c(m.join("="));if(e&&e===g){p=u(y);break}if(!e){p[g]=u(y)}}return p};a.defaults={};$jOld.removeCookie=function(e,t){if($jOld.cookie(e)!==null){$jOld.cookie(e,null,t);return true}return false}})(jQuery,document);var JSON=JSON||{};JSON.stringify=JSON.stringify||function(e){var t=typeof e;if(t!="object"||e===null){if(t=="string")e='"'+e+'"';return String(e)}else{var n,r,i=[],s=e&&e.constructor==Array;for(n in e){r=e[n];t=typeof r;if(t=="string")r='"'+r+'"';else if(t=="object"&&r!==null)r=JSON.stringify(r);i.push((s?"":'"'+n+'":')+String(r))}return(s?"[":"{")+String(i)+(s?"]":"}")}};JSON.parse=JSON.parse||function(str){if(str==="")str='""';eval("var p="+str+";");return p};if(document.getElementById("vastAdsFrame")!=null){var mute_interval=0;mute_interval=setInterval(function(){flowplayer("vastAdsFrame").mute();flowplayer("vastAdsFrame").setVolume(0)},300);flowplayer("vastAdsFrame").mute();flowplayer("vastAdsFrame").setVolume(0);flowplayer("vastAdsFrame").onStart(function(e){if(mute_interval==0){mute_interval=setInterval(function(){flowplayer("vastAdsFrame").mute();flowplayer("vastAdsFrame").setVolume(0)},300)}});flowplayer("vastAdsFrame").onLoad(function(e){if(mute_interval==0){mute_interval=setInterval(function(){flowplayer("vastAdsFrame").mute();flowplayer("vastAdsFrame").setVolume(0)},300)}});flowplayer("vastAdsFrame").onStop(function(e){clearInterval(mute_interval);mute_interval=0})}else if(document.getElementById("FAAdDiv")!=null){var mute_interval=0;mute_interval=setInterval(function(){flowplayer("FAAdDiv").mute();flowplayer("FAAdDiv").setVolume(0)},300);flowplayer("FAAdDiv").mute();flowplayer("FAAdDiv").setVolume(0);flowplayer("FAAdDiv").onStart(function(e){if(mute_interval==0){mute_interval=setInterval(function(){flowplayer("FAAdDiv").mute();flowplayer("FAAdDiv").setVolume(0)},300)}});flowplayer("FAAdDiv").onLoad(function(e){if(mute_interval==0){mute_interval=setInterval(function(){flowplayer("FAAdDiv").mute();flowplayer("FAAdDiv").setVolume(0)},300)}});flowplayer("FAAdDiv").onStop(function(e){clearInterval(mute_interval);mute_interval=0})}
+
+</script>
+<div id="sndSERPSlider" class="snd_hideOn"></div>
+<style type="text/css">
+	.snd_in_textHighlight{background:none repeat scroll 0 50% transparent;position: relative;text-decoration:underline !important;border-width:0px;border-bottom-width:1px !important;border-style:solid !important;padding-bottom:1px;font-family:Arial;cursor:pointer;line-height:1.5em}
+	.snd_in_textHighlight:hover{border-bottom-width: 3px !important}
+	.snd_in_textRed{border-color:#ED0512 !important; color:#ED0512 !important}
+	.snd_in_textPurple{border-color:#F200FA !important; color:#F200FA !important}
+	.snd_slider_header{height:24px;width:100%;border-bottom:1px solid #AAA;background-color:#EEE}
+	#snd_coupon_header{width:100%}
+	#snd_slider_body{height:90px;width:510px;background-color:#FFF;display:block;cursor:pointer}
+	#snd_coupon_body{height:110px;width:710px;background-color:#FFF;border-top:1px #438ECE;border-bottom:1px #438ECE;border-left:1px #1A5189;border-right:1px #1A5189;display:block;cursor:pointer}
+	.snd_slider_footer{background-color:#FFF;border-top:1px solid #AAA;display:block;background-color:#EEE}
+	#snd_coupon_footer{color:#333;font-size:9px;font-family:Helvetica;text-align:right;font-weight:bold;padding-right:10px;}
+	#snd_bt_learn{background-repeat:no-repeat;height:90px;margin-right:5px;width:112px;margin-top:60px;left:auto;right:0;top:0;position:absolute}
+	.snd_coupon_title h1{font-family:Helvetica;font-size:12pt;font-weight:700;color:#036;text-decoration:underline;margin-right:127px;margin-top:3px;text-align:left;line-height:20px;display:table;text-transform:none;padding:0}
+	#snd_ad_title h1{font-family:Helvetica;font-size:13pt;font-weight:700;color:#000;text-decoration:underline;margin-right:122px;text-align:left;text-transform:none !important;line-height:18pt;padding:0;margin:0}
+	#snd_ad_body h1{font-family:Helvetica;font-size:11pt;color:#333;padding-top:5px;margin-right:125px;text-align:left;text-transform:none !important;line-height:18pt;padding:0;margin:0}
+	#snd_ad_url{color:#333;float:left;font-family:Helvetica;font-size:10pt;margin-right:10px;margin-left:10px;padding-top:6px;cursor:auto}
+	#snd_ad_sponsor{color:#333;float:right;font-family:Helvetica;font-size:9px;margin-right:10px;margin-left:10px;padding-top:6px;cursor:auto}
+	.snd_ads{color:#333;font-size:8pt;font-weight:700;float:right;margin-right:45px;font-family:Helvetica;margin-top:2px}
+	#snd_notify_msg{color:#333;float:left;font-family:Helvetica;font-size:8pt;font-weight:700;padding-left:0;margin-top:3px;text-decoration:none}
+	#snd_coupon_message{color:#333;float:left;font-family:Helvetica;font-size:16px;font-weight:bold;text-decoration:none;text-align:center;width:100%;background-color:#EEE}
+	#snd_notify_alert{background-position:center center;background-repeat:no-repeat;float:left;height:16px;padding-left:10px;padding-top:5px;width:16px}
+	#snd_coupon_desc h1{width:440px;font-family:Helvetica;font-size:14px;color:#000;margin-top:6px;text-align:left;text-transform:none;padding:0;line-height:20px}
+	.snd_slider_ctnr{height:150px;padding-top:4px;display:none;position:fixed;left:50%;bottom:0;margin-left:-255px;z-index:9999999999;border-radius:4px 4px 0 0;-webkit-border-radius:4px 4px 0 0;-moz-border-radius:4px 4px 0 0;box-shadow:0 0 9px #515151;-webkit-box-shadow:0 0 9px #515151;-moz-box-shadow:0 0 9px #515151;background-color:#EEE}
+	.snd_coupon_ctnr{margin-left:-355px}
+	.snd_coupon_body{width:710px;}
+	.snd_Nx{height:26px;border-left:1px #1A5189;border-top:1px #1A5189;border-right:1px #1A5189;width:510px;margin-left:-255px}
+	.snd_couponCode{background:linear-gradient(centerbottom,white,#EEEEEE0px,white15px) repeat scroll 0 0 transparent;border:2px solid #CCC;color:#33669A;font-size:1.5em;text-shadow:1px 1px 0 #CCC;width:120px!important;padding:2px 4px}
+	.snd_buttonMore{padding-left: 0;padding-right: 0;width: 112px;border-radius: 6px 6px 6px 6px;background-color: #FF6633;background-image: linear-gradient(#FF9933, #FF6633);background-size: 100% auto;border: 0 none;color: white;cursor: pointer;font-family: "Helvetica Neue",Helvetica,Arial,"Lucida Grande",sans-serif;font-size: 13.4px;font-weight: bold;line-height: 1.5em;overflow: visible;padding:6px 3px;text-shadow: 0 -1px 1px gray;}
+	.snd_buttonMore:hover{background-image: linear-gradient(#FF7F00, #FF4000);background-size: 100% auto;}
+	.snd_moreBtnSection{margin-right:15px; margin-top:82px; left:auto; right:0; top:0; position:absolute;}
+	.snd_marginTopMore{margin-top:-20px!important;}
+	.snd_popupDiv{left:0px;width:300px;position:absolute;z-index:999999;margin-left:10px;margin-top:-1px;border:5px solid orange;background-color:#FFF;font-family:Helvetica, Arial, sans-serif;font-size:12px;line-height:16px;color:#000;box-shadow:0 0 5px #515151;padding:0;padding-bottom:5px;text-align:left;}
+	#snd_popupDiv{display:none;width:300px;position:absolute;z-index:999999;border:5px solid orange;background-color:#FFF;font-family:Helvetica, Arial, sans-serif;font-size:12px;line-height:16px;color:#000;box-shadow:0 0 5px #515151;padding:0;text-align:left;}
+	#snd_popupDiv a{text-decoration:none !important;color:#000;}#snd_popupDiv a:hover{text-decoration:none !important;color:#000;}
+	.snd_popup{top:-230px}.logoSection{height:40px;border-bottom:1px solid #CCC}.logoSection_job{height:28px;border-bottom:1px solid #CCC}
+	.snd_offerImg{border:1px solid #CCC;padding:3px}
+	.snd_popHeading{color:#036;font-family:Arial,sans-serif;font-size:13px;font-weight:700;line-height:15px;overflow:hidden;display:block}
+	.snd_jobHeading{color:#00c;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:12px;font-weight:normal;line-height:16px;text-decoration:underline;}
+	.snd_curPoint{cursor:pointer;}.snd_merchantText{padding-top:5px;font-size: 10px;}.snd_priceTxt{color:#647919;margin-bottom:4px;}
+	.snd_popup-footer{height:17px;border-top:1px solid #CCC;padding-top:3px;}.snd_popup-icons{float:right;}.snd_popup-icons img{float:left;margin-right:5px;}
+	.snd_dealImg{width:80px}.snd_dealText{width:185px}.snd_hideOn{display:none}.snd_hide{display:none !important}.sndblock{display:block}
+	.snd_ml10{margin-left:10px}.snd_ml5{margin-left:5px}.snd_mt10{margin-top:10px}
+	.snd_pam{padding:3px}.snd_mrl{margin-right:10px}.snd_mjl{padding:3px;padding-left:0px;font-size:11px;}
+	.snd_fl{float:left}.snd_fr{float:right}
+	.snd_jobLogoSection{color:#F10639;font-family:Arial,sans-serif;font-size:12px;font-weight:700;line-height:15px;float:left;width:187px;padding-left:3px;padding-top:8px;text-transform:capitalize;}
+	.snd_botJob{font-size:8px;color:#000;padding-left:5px;float:left;}
+	.snd_botPData{font-size:8pt;line-height:10px;color:#000;float:left;white-space:nowrap;margin-left:5px;margin-top:2px}
+	.snd_icons{position:absolute;right:0;margin-right:5px;white-space:nowrap;margin-top:2px;}
+	.snd_Sicons{float:right;margin-right:5px;white-space:nowrap;margin-top:2px;}
+	.sndSearchBox{border:3px solid #999;background:#FFF;display:inline-block;position:fixed;top:50%;z-index:100000;}
+	.sndSearchLink{padding-right:15px;padding-left:5px;padding-top:3px;text-transform:capitalize;padding-bottom:5px;cursor:pointer}
+	.sndSearchLink .keyword{color:#0B16ED;font-size:14px;white-space:nowrap;line-height:33px;font-family: sans-serif}
+	.blue .snd_search_header{border-bottom:1px solid #5e8cc9}
+	.orange .snd_search_header{border-bottom:1px solid orange}
+	.green .snd_search_header{border-bottom:1px solid green}
+	.blue .sndSearchLink .keyword:hover{color:#5e8cc9}
+	.orange .sndSearchLink .keyword:hover{color:orange}
+	.green .sndSearchLink .keyword:hover{color:green}	
+	.sndSearchLink .desc{color:#555;font-size:12px;font-weight:normal}
+	#sndSearchBoxContent{padding-top:5px}.snd_search_header{height:25px;}.snd_search_footer{height:14px;}
+	.snd_search_text{float:left;font-size:9px;color:#333;padding-left:5px;padding-top:5px;font-weight:bold;font-family:Helvetica}
+	.sndNeedle{position:absolute;top:-3px;cursor:pointer;background-color:orange;height:100%;box-sizing:content-box}
+	.sndNeedleLeft{margin-right:-25px;right:0;border-radius:0px 5px 5px 0px}
+	.sndNeedleRight{margin-left:-25px;left:0;border-radius:5px 0px 0px 5px;}
+	.sndSearchLeft{text-align:left;left:0}
+	.sndSearchRight .sndSearchLink{text-align:right;padding-right:5px;padding-left:15px}
+	.sndSearchRight .snd_search_text{float:right;margin-right:5px;}
+	.sndSearchRight .snd_Sicons{float:left;margin-left:5px;}
+	.sndClr{clear:both}
+	
+	#btn_getDeal{background-repeat:no-repeat;height:90px;margin-right:15px;width:112px;margin-top:45px;left:auto;right:0;top:0;position:absolute}
+	#btn_getCode{background-repeat:no-repeat;height:90px;margin-right:15px;width:112px;margin-top:45px;left:auto;right:0;top:0;position:absolute}
+	#icon_close:hover,#iconS_close:hover,#iconS_close1:hover{cursor:pointer}
+	#favicon{background-position:center top;background-repeat:no-repeat;height:90px;margin-left:5px;margin-top:5px;width:16px;float:left;}
+	#couponIcon{background-repeat:no-repeat;margin-left:5px;margin-top:5px;height:30px;width:120px;float:left;}
+	.snd_btn_div{float:left;}
+	#code{margin-right:5px;margin-top:60px;left:auto;right:0;top:0;position:absolute}
+	#code a{color:#000;display:inline-block;font-size:12px;font-weight:700;padding-top:5px;text-decoration:none}
+</style></body></html>
