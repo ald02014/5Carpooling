@@ -3,8 +3,9 @@
 /* Padding below the footer and lighter body text */
 
 body {
-  padding-bottom: 40px;
+  padding-bottom: 30px;
   color: #5a5a5a;
+  background-image:url(http://glassduffle.com/wp-content/uploads/2013/07/Image-1.jpg);
 
 }
 
@@ -14,26 +15,50 @@ body {
 
 /* Special class on .container surrounding .navbar, used for positioning it into place. */
 .navbar-wrapper {
-  position: absolute;
+  position: fixed;
   top: 0;
   right: 0;
   left: 0;
   z-index: 20;
+  font-family: "Lucida Sans Unicode";
+  font-style: inherit;
 }
-
+#navbar a,.navbar-brand{
+  color: black !important;
+}
+.open a {
+ background-color: #f5f3da !important;
+}
+.navbar {
+  border: none !important;
+}
 /* Flip around the padding for proper display in narrow viewports */
 .navbar-wrapper > .container {
   padding-right: 0;
   padding-left: 0;
-}
+  }
 .navbar-wrapper .navbar {
   padding-right: 15px;
   padding-left: 15px;
+
 }
 .navbar-wrapper .navbar .container {
   width: auto;
+  border-radius: 5px;
+  background-color: #f5f3da !important;
+
+}
+#signupnav{
+  float:right;
+}
+#signupnav a{
+  padding-right:0;
 }
 
+#logo{
+  position: relative;
+  bottom: 13px
+}
 
 /* CUSTOMIZE THE CAROUSEL
 -------------------------------------------------- */
@@ -51,7 +76,7 @@ body {
 /* Declare heights because of positioning of img element */
 .carousel .item {
   height: 500px;
-  background-color: #777;
+  
 }
 .carousel-inner > .item > img {
   position: absolute;
@@ -66,12 +91,21 @@ body {
   padding-top: 250px;
 
 }
+.carousel-control.right {
+  background-image: none;
+}
+.carousel-control.left {
+  background-image: none;
+
+}
 .right img {
   bottom: 500px;
   left: 0px;
   padding-bottom: 250px;
   transform: rotate(180deg);
+
 }
+
 
 /* MARKETING CONTENT
 -------------------------------------------------- */
@@ -83,10 +117,22 @@ body {
 }
 .marketing h2 {
   font-weight: normal;
+  font-size: 25.5px;
+  color: white;
+  
+}
+.btn-primary {
+   color: #fff;
+  text-align: center;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, .6);
+  text-shadow: none;
 }
 .marketing .col-lg-4 p {
   margin-right: 10px;
   margin-left: 10px;
+  font-size: 15px;
+  color: white;
+  text-shadow: 0 1px 2px rgba(.5, .5, .5, 1.9);
 }
 
 
